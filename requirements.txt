@@ -1,0 +1,20 @@
+# SQL ORM
+sqlalchemy
+pymysql
+psycopg2
+
+# NoSQL ODM
+pymongo
+mongoengine
+redis
+boto3
+google-cloud-firestore
+
+# Graph OGM
+neo4j
+neomodel
+rdflib
+pyTigerGraph
+
+uv
+cryptography
