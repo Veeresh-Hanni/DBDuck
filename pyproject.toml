@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "DBDuck"
+version = "0.0.1"
+description = "Universal data object model for SQL, NoSQL, graph, vector, and AI databases."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "sqlalchemy",
+  "pymysql",
+  "psycopg2",
+  "pyodbc",
+  "pymongo",
+  "mongoengine",
+  "redis",
+  "boto3",
+  "google-cloud-firestore",
+  "neo4j",
+  "neomodel",
+  "rdflib",
+  "pyTigerGraph",
+  "cryptography",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["udom*"]
