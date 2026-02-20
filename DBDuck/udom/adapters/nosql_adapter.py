@@ -1,6 +1,8 @@
-﻿import re
+import re
+from typing import Any, Mapping
 from urllib.parse import urlparse
 
+from ...core.exceptions import ConnectionError, QueryError
 from .base_adapter import BaseAdapter
 
 
@@ -14,10 +16,12 @@ class NoSQLAdapter(BaseAdapter):
         self._client = None
         self._db = None
 
-    def run_native(self, query):
+    def run_native(self, query: Any, params: Mapping[str, Any] | None = None):
         """Execute Mongo operation dicts when db_instance is mongodb."""
+        if params:
+            raise QueryError("NoSQLAdapter does not support SQL-style params argument")
+
         if self.db_instance != "mongodb":
-            print(f"Executing NoSQL Query ({self.db_instance}):", query)
             return query
 
         self._ensure_mongo()
@@ -60,7 +64,7 @@ class NoSQLAdapter(BaseAdapter):
 
         return {"error": "Unsupported Mongo operation."}
 
-    def convert_uql(self, uql_query):
+    def convert_uql(self, uql_query: str):
         """Convert basic UQL commands to Mongo-style operation dictionaries."""
         uql_query = uql_query.strip()
         cmd = uql_query.upper()
@@ -81,6 +85,47 @@ class NoSQLAdapter(BaseAdapter):
                 return {"insert": collection, "document": self._parse_key_value_pairs(fields)}
 
         return {"error": "Unsupported or invalid UQL syntax"}
+
+    def create(self, entity: str, data: Mapping[str, Any]) -> Any:
+        if not isinstance(data, Mapping) or not data:
+            raise QueryError("data must be a non-empty mapping")
+        return self.run_native({"insert": entity.lower(), "document": dict(data)})
+
+    def create_many(self, entity: str, rows: list[Mapping[str, Any]]) -> Any:
+        if not isinstance(rows, list) or not rows:
+            raise QueryError("rows must be a non-empty list")
+        results = [self.create(entity, row) for row in rows]
+        return {"inserted_count": len(results), "results": results}
+
+    def find(
+        self,
+        entity: str,
+        where: Mapping[str, Any] | str | None = None,
+        order_by: str | None = None,
+        limit: int | None = None,
+    ) -> Any:
+        if order_by is not None or limit is not None:
+            raise QueryError("NoSQLAdapter.find currently supports only entity + where")
+        if where is None:
+            native_where = {}
+        elif isinstance(where, Mapping):
+            native_where = dict(where)
+        elif isinstance(where, str):
+            native_where = self._convert_condition(where)
+        else:
+            raise QueryError("where must be mapping, string, or None")
+        return self.run_native({"find": entity.lower(), "where": native_where})
+
+    def delete(self, entity: str, where: Mapping[str, Any] | str) -> Any:
+        if isinstance(where, Mapping):
+            native_where = dict(where)
+        elif isinstance(where, str):
+            native_where = self._convert_condition(where)
+        else:
+            raise QueryError("where must be mapping or string")
+        if not native_where:
+            raise QueryError("delete requires a non-empty where condition")
+        return self.run_native({"delete": entity.lower(), "where": native_where})
 
     def _extract_collection_and_condition(self, uql_query):
         match = re.match(r"(FIND|DELETE)\s+(\w+)\s*(?:WHERE\s+(.+))?", uql_query, re.IGNORECASE)
@@ -147,7 +192,7 @@ class NoSQLAdapter(BaseAdapter):
         try:
             from pymongo import MongoClient
         except Exception as exc:
-            raise RuntimeError("pymongo is required for MongoDB support") from exc
+            raise ConnectionError("pymongo is required for MongoDB support") from exc
 
         timeout_ms = int(self.options.get("connect_timeout_ms", 3000))
         self._client = MongoClient(self.url, serverSelectionTimeoutMS=timeout_ms)

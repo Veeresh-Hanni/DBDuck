@@ -11,9 +11,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Any, Iterator, Mapping
 
-from ..adapters.mysql_adapter import MySQLAdapter
-from ..adapters.postgres_adapter import PostgresAdapter
-from ..adapters.sqlite_adapter import SQLiteAdapter
+from ..core import AdapterRouter, SchemaValidator
 from ..core.base_adapter import BaseAdapter
 from ..core.exceptions import QueryError, TransactionError
 from ..utils.logger import get_logger, log_event
@@ -44,7 +42,7 @@ class UDOM:
         url: str | None = None,
         **options: Any,
     ) -> None:
-        self.db_type, self.db_instance = self._normalize_config(db_type, db_instance or server)
+        self.db_type, self.db_instance = self._normalize_config(db_type, db_instance or server, url)
         self.url = url or self._default_url(self.db_type, self.db_instance)
         self.options = options
         self.parser = UQLParser()
@@ -52,12 +50,17 @@ class UDOM:
         self.logger = get_logger(options.get("log_level"))
         self.adapter = self.get_adapter()
 
-    def _normalize_config(self, db_type: str, db_instance: str | None) -> tuple[str, str]:
+    def _normalize_config(self, db_type: str, db_instance: str | None, url: str | None) -> tuple[str, str]:
         db_type_value = (db_type or "").lower()
         db_instance_value = (db_instance or "").lower()
         if db_type_value in self._SUPPORTED_DB_TYPES:
             if not db_instance_value:
-                db_instance_value = self._default_instance(db_type_value)
+                if db_type_value == "sql":
+                    db_instance_value = AdapterRouter.infer_sql_instance_from_url(url) or self._default_instance(
+                        db_type_value
+                    )
+                else:
+                    db_instance_value = self._default_instance(db_type_value)
             return db_type_value, self._normalize_instance_alias(db_instance_value)
         engine = self._normalize_instance_alias(db_type_value)
         if engine in self._SQL_ENGINES:
@@ -98,10 +101,7 @@ class UDOM:
 
     def get_adapter(self) -> BaseAdapter:
         if self.db_type == "sql":
-            sql_map = {"sqlite": SQLiteAdapter, "mysql": MySQLAdapter, "postgres": PostgresAdapter}
-            adapter_cls = sql_map.get(self.db_instance)
-            if adapter_cls is None:
-                raise ValueError(f"Unsupported SQL db_instance: {self.db_instance}")
+            self.db_instance, adapter_cls = AdapterRouter.route_sql_adapter(self.db_instance, self.url)
             return adapter_cls(url=self.url, **self.options)
         if self.db_type == "nosql":
             return NoSQLAdapter(db_instance=self.db_instance, url=self.url, **self.options)
@@ -136,20 +136,23 @@ class UDOM:
         return self.adapter.run_native(native_query)
 
     def create(self, entity: str, data: Mapping[str, Any]) -> Any:
-        entity_name = self._normalize_entity(entity)
+        entity_name = SchemaValidator.validate_entity(self._normalize_entity(entity))
+        payload = SchemaValidator.validate_create_data(data)
         if self.db_type == "sql":
             log_event(self.logger, 20, "Create request", event="query.create", db=self.db_instance, entity=entity_name)
-            return self.adapter.create(entity_name, data)
-        body = ", ".join([f"{k}: {self._to_uql_value(v)}" for k, v in data.items()])
+            return self.adapter.create(entity_name, payload)
+        body = ", ".join([f"{k}: {self._to_uql_value(v)}" for k, v in payload.items()])
         return self.uexecute(f"CREATE {entity_name} " + "{" + body + "}")
 
     def create_many(self, entity: str, rows: list[Mapping[str, Any]]) -> Any:
-        entity_name = self._normalize_entity(entity)
+        entity_name = SchemaValidator.validate_entity(self._normalize_entity(entity))
+        if not isinstance(rows, list) or not rows:
+            raise QueryError("rows must be a non-empty list")
         if self.db_type == "sql":
             return self.adapter.create_many(entity_name, rows)
         results = []
         for row in rows:
-            results.append(self.create(entity_name, row))
+            results.append(self.create(entity_name, SchemaValidator.validate_create_data(row)))
         return results
 
     def find(
@@ -159,14 +162,16 @@ class UDOM:
         order_by: str | None = None,
         limit: int | None = None,
     ) -> Any:
-        entity_name = self._normalize_entity(entity)
+        entity_name = SchemaValidator.validate_entity(self._normalize_entity(entity))
+        where = SchemaValidator.validate_find_where(where)
         if self.db_type == "sql":
             log_event(self.logger, 20, "Find request", event="query.find", db=self.db_instance, entity=entity_name)
             return self.adapter.find(entity_name, where=where, order_by=order_by, limit=limit)
         return self.uexecute(self._build_find_uql(entity_name, where, order_by, limit))
 
     def delete(self, entity: str, where: Mapping[str, Any] | str) -> Any:
-        entity_name = self._normalize_entity(entity)
+        entity_name = SchemaValidator.validate_entity(self._normalize_entity(entity))
+        where = SchemaValidator.validate_find_where(where)
         if self.db_type == "sql":
             log_event(self.logger, 20, "Delete request", event="query.delete", db=self.db_instance, entity=entity_name)
             return self.adapter.delete(entity_name, where=where)

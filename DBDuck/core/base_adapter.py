@@ -14,17 +14,18 @@ class BaseAdapter(ABC):
         """Execute a native backend query."""
 
     @abstractmethod
-    def convert_uql(self, uql_query: str) -> str:
+    def convert_uql(self, uql_query: str) -> Any:
         """Convert UQL to backend-native query language."""
 
+    @abstractmethod
     def create(self, entity: str, data: Mapping[str, Any]) -> Any:
         """Create a new record/document for the given entity."""
-        raise NotImplementedError
 
+    @abstractmethod
     def create_many(self, entity: str, rows: list[Mapping[str, Any]]) -> Any:
         """Batch-create records/documents."""
-        raise NotImplementedError
 
+    @abstractmethod
     def find(
         self,
         entity: str,
@@ -33,8 +34,7 @@ class BaseAdapter(ABC):
         limit: int | None = None,
     ) -> Any:
         """Find records/documents from an entity."""
-        raise NotImplementedError
 
+    @abstractmethod
     def delete(self, entity: str, where: Mapping[str, Any] | str) -> Any:
         """Delete records/documents from an entity."""
-        raise NotImplementedError

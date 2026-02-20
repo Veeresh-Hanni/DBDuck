@@ -20,6 +20,7 @@ class SQLAlchemyAdapter(BaseAdapter):
 
     DIALECT = "sql"
     IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    _DANGEROUS_SQL = re.compile(r"(?:--|/\*|\*/|;|\b(UNION|DROP|TRUNCATE|ALTER)\b)", re.IGNORECASE)
 
     def __init__(self, url: str, **options: Any) -> None:
         self.url = url
@@ -30,6 +31,8 @@ class SQLAlchemyAdapter(BaseAdapter):
             url=url,
             pool_size=int(options.get("pool_size", 5)),
             max_overflow=int(options.get("max_overflow", 10)),
+            pool_timeout=int(options.get("pool_timeout", 30)),
+            pool_recycle=int(options.get("pool_recycle", 1800)),
             pool_pre_ping=bool(options.get("pool_pre_ping", True)),
             echo=bool(options.get("echo", False)),
         )
@@ -134,8 +137,7 @@ class SQLAlchemyAdapter(BaseAdapter):
         if where is None:
             return "", {}
         if isinstance(where, str):
-            # Legacy support path. Callers are responsible for trusted expressions.
-            return f" WHERE {where}", {}
+            return self._build_parameterized_where_from_string(where)
         if not isinstance(where, Mapping):
             raise QueryError("where must be a mapping, string, or None")
         parts = []
@@ -148,6 +150,65 @@ class SQLAlchemyAdapter(BaseAdapter):
         if not parts:
             return "", {}
         return " WHERE " + " AND ".join(parts), params
+
+    def _build_parameterized_where_from_string(self, where: str) -> tuple[str, dict[str, Any]]:
+        text_where = where.strip()
+        if not text_where:
+            return "", {}
+        if self._DANGEROUS_SQL.search(text_where):
+            raise QueryError("Potential SQL injection detected in where clause")
+        tokens = re.split(r"\s+(AND|OR)\s+", text_where, flags=re.IGNORECASE)
+        clauses: list[str] = []
+        params: dict[str, Any] = {}
+        i = 0
+        connector_expected = False
+        for token in tokens:
+            token = token.strip()
+            if not token:
+                continue
+            upper = token.upper()
+            if upper in {"AND", "OR"}:
+                if not connector_expected:
+                    raise QueryError("Invalid where clause structure")
+                clauses.append(upper)
+                connector_expected = False
+                continue
+            match = re.fullmatch(
+                r"([A-Za-z_][A-Za-z0-9_]*)\s*(=|!=|>=|<=|>|<)\s*(.+)",
+                token,
+                flags=re.IGNORECASE,
+            )
+            if not match:
+                raise QueryError("Unsupported where string format; use dict or simple expressions")
+            field, op, raw_value = match.group(1), match.group(2), match.group(3).strip()
+            self._validate_identifier(field)
+            pname = f"ws_{i}"
+            i += 1
+            value = self._parse_literal_value(raw_value)
+            clauses.append(f"{self._quote(field)} {op} :{pname}")
+            params[pname] = value
+            connector_expected = True
+        if not clauses:
+            return "", {}
+        if clauses[-1] in {"AND", "OR"}:
+            raise QueryError("Invalid where clause structure")
+        return " WHERE " + " ".join(clauses), params
+
+    @staticmethod
+    def _parse_literal_value(raw: str) -> Any:
+        value = raw.strip()
+        if (value.startswith("'") and value.endswith("'")) or (value.startswith('"') and value.endswith('"')):
+            return value[1:-1]
+        lower = value.lower()
+        if lower == "true":
+            return True
+        if lower == "false":
+            return False
+        if re.fullmatch(r"-?\d+", value):
+            return int(value)
+        if re.fullmatch(r"-?\d+\.\d+", value):
+            return float(value)
+        return value
 
     def find(
         self,

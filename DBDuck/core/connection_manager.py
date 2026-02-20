@@ -67,6 +67,8 @@ class ConnectionManager:
         *,
         pool_size: int = 5,
         max_overflow: int = 10,
+        pool_timeout: int = 30,
+        pool_recycle: int = 1800,
         pool_pre_ping: bool = True,
         echo: bool = False,
     ) -> Engine:
@@ -83,6 +85,8 @@ class ConnectionManager:
                         {
                             "pool_size": pool_size,
                             "max_overflow": max_overflow,
+                            "pool_timeout": pool_timeout,
+                            "pool_recycle": pool_recycle,
                             "pool_pre_ping": pool_pre_ping,
                         }
                     )
