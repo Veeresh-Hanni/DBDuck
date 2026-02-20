@@ -1,5 +1,4 @@
-﻿from udom.udom import UDOM
-
+﻿from DBDuck.UDOM import UDOM
 db = UDOM(db_type="graph", db_instance="neo4j")
 
 print(db.uquery("FIND User WHERE age > 25 AND active = true"))
