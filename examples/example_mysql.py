@@ -1,18 +1,13 @@
-﻿from udom import UDOM
+﻿import sys
+from pathlib import Path
 
-# New style: db_type + db_instance
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-db = UDOM(db_type="sql", db_instance="mysql", url="mysql+pymysql://root:Veeru123@localhost:3306/udom")
+from DBDuck import UDOM
 
-print("Native SQL Query (db.query)")
-print(db.query("SELECT * FROM `User`;"))
+# Requires a running MySQL server and existing `udom` database.
+db = UDOM(db_type="sql", db_instance="mysql", url="mysql+pymysql://root:pass@localhost:3306/dbduck")
 
-print("\nInserting data using UQL")
-db.uexecute('CREATE User {name: "Veeresh", age: 23, active: true}')
-db.uexecute('CREATE User {name: "John", age: 30, active: false}')
-
-print("\nFetching all users using UQL")
-print(db.uexecute("FIND User"))
-
-print("\nFetching users age > 21 using UQL")
-print(db.uexecute("FIND User WHERE age > 21"))
+print(db.create("Orders", {"order_id": 101, "customer": "A", "paid": True}))
+print(db.find("Orders", where={"paid": True}, limit=10))
+# print(db.delete("Orders", where={"order_id": 101}))

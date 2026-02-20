@@ -1,48 +1,97 @@
-﻿# dbduck (UDOM Core)
+﻿# DBDuck
 
-**dbduck is a universal data object model for SQL, NoSQL, graph, vector, and AI databases.**
+<p align="center">
+  <img src="docs/assets/dbduck-logo.png" alt="DBDuck Logo" width="320" bg="black" />
+</p>
 
-Define data once, query anywhere.
+**Universal Data Object Model (UDOM) for SQL and NoSQL.**
 
-## What It Does
+DBDuck gives one API for data operations across engines.
 
-`dbduck` (implemented here as `UDOM`) provides one consistent interface for working across multiple database types:
+## Current Stage
 
-- SQL: SQLite, MySQL, PostgreSQL, MariaDB
-- NoSQL: MongoDB and document-style stores
-- Graph: Neo4j and graph backends
-- Extensible path for vector and AI-native data workflows
-
-## Core Interface
-
-- `query(sql)`: run native queries on supported backends
-- `uexecute(uql)`: run universal query language (UQL) operations
+- Stable focus: `SQL` + `NoSQL (MongoDB)`
+- Next phase: Graph, AI, Vector
 
 ## Install
 
 ```bash
-pip install -r requirements.txt
+pip install .
+# for tests and tooling
+pip install .[dev]
 ```
 
-## Quick Example
+## Quick Start
 
 ```python
-from udom import UDOM
+from DBDuck import UDOM
 
-# MySQL example
+# SQL (MySQL / PostgreSQL / SQLite)
+db = UDOM(db_type="sql", db_instance="mysql", url="mysql+pymysql://user:pass@localhost:3306/udom")
+db.create("Orders", {"order_id": 101, "customer": "A", "paid": True})
+print(db.find("Orders", where={"paid": True}, limit=10))
 
-db = UDOM(
-    db_type="mysql",
-    url="mysql+pymysql://root:password@localhost:3306/udom"
-)
+# Explicit transactions
+db.begin()
+db.create("Orders", {"order_id": 102, "customer": "B", "paid": False})
+db.commit()
 
-# Native query
-print(db.query("SELECT * FROM `User`;"))
+# Transaction context manager
+with db.transaction():
+    db.create("Orders", {"order_id": 103, "customer": "C", "paid": True})
 
-# UQL create and read
-
-db.uexecute('CREATE User {name: "Veeresh", age: 23, active: true}')
-print(db.uexecute("FIND User WHERE age > 21"))
+# NoSQL (MongoDB)
+nosql_db = UDOM(db_type="nosql", db_instance="mongodb", url="mongodb://localhost:27017/udom")
+print(nosql_db.execute("ping"))
+print(nosql_db.create("events", {"type": "login", "ok": True}))
+print(nosql_db.find("events", where={"ok": True}))
 ```
 
-More examples are available in `examples/`.
+## Core API
+
+- `create(entity, data)`
+- `create_many(entity, rows)`
+- `find(entity, where=None, order_by=None, limit=None)`
+- `delete(entity, where)`
+- `execute(native_query)`
+- `uquery(uql)`
+- `uexecute(uql)`
+- `begin()`
+- `commit()`
+- `rollback()`
+- `transaction()`
+
+## Production Architecture
+
+```text
+DBDuck/
+  core/
+    base_adapter.py
+    connection_manager.py
+    exceptions.py
+    transaction.py
+  adapters/
+    mysql_adapter.py
+    postgres_adapter.py
+    sqlite_adapter.py
+  udom/
+    udom.py
+  utils/
+    logger.py
+```
+
+Design highlights:
+- Adapter pattern keeps backend-specific logic out of `UDOM`.
+- SQL adapters use SQLAlchemy with parameterized execution and connection pooling.
+- `ConnectionManager` provides lazy, thread-safe engine/session reuse.
+- Structured logging captures query, error, and connection events.
+
+## Initialize Guide
+
+See `docs/INITIALIZE.md` for full initialization steps.
+
+## Logo
+
+Place your logo file here:
+
+- `docs/assets/dbduck-logo.png`

@@ -1,10 +1,12 @@
-﻿from udom import UDOM
+﻿from DBDuck import UDOM
 
-db = UDOM(db_type="sql", db_instance="sqlite", url="sqlite:///udom.db")
+# Any SQL table name works (Customer, Product, Orders, etc.)
+db = UDOM(db_type="sql", db_instance="sqlite", url="sqlite:///dbduck.db")
 
-print("Inserting data...")
-db.uexecute('CREATE User {name: "Veeresh", age: 23, active: true}')
-db.uexecute('CREATE User {name: "John", age: 30, active: false}')
+print(db.create("Product", {"name": "Keyboard", "price": 99, "active": True}))
+print(db.create("Product", {"name": "Mouse", "price": 49, "active": True}))
+print(db.find("Product", where={"active": True}, order_by="price DESC", limit=10))
+print(db.create("Orders", {"order_id": 101, "customer": "A", "paid": True}))
+print(db.find("Orders", where={"paid": True}, limit=10))
 
-print("\nFetching all users:")
-print(db.uexecute("FIND User"))
+db.execute("DROP TABLE Orders")

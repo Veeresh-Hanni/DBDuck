@@ -4,14 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "DBDuck"
-version = "0.0.1"
+version = "0.1.0"
 description = "Universal data object model for SQL, NoSQL, graph, vector, and AI databases."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
-  "sqlalchemy",
-  "pymysql",
-  "psycopg2",
+  "sqlalchemy>=2.0.25",
+  "pymysql>=1.1.0",
+  "psycopg2-binary>=2.9.9",
+  "typing-extensions>=4.10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-cov>=5.0.0",
+]
+all = [
   "pyodbc",
   "pymongo",
   "mongoengine",
@@ -23,6 +32,7 @@ dependencies = [
   "rdflib",
   "pyTigerGraph",
   "cryptography",
+  "psycopg2-binary",
 ]
 
 [tool.setuptools]
@@ -30,4 +40,8 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["udom*"]
+include = ["udom*", "DBDuck*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -1,4 +1,4 @@
-from udom.adapters.base_adapter import BaseAdapter
+﻿from ..base_adapter import BaseAdapter
 from sqlalchemy import create_engine, text
 import re
 
@@ -9,7 +9,7 @@ class BaseSQLAdapter(BaseAdapter):
 
     # ---------- SQL runner ----------
     def run_native(self, query):
-        print(f"🛠 Executing SQL → {query}")
+        print(f"ðŸ›  Executing SQL â†’ {query}")
         with self.engine.begin() as conn:
             try:
                 result = conn.execute(text(query))
@@ -20,11 +20,12 @@ class BaseSQLAdapter(BaseAdapter):
             except Exception as e:
                 return f"SQL Error: {str(e)}"
 
-    # ---------- Universal UQL → SQL ----------
+    # ---------- Universal UQL â†’ SQL ----------
     def convert_uql(self, uql):
         uql = uql.strip()
+        cmd = uql.upper()
 
-        if uql.startswith("FIND"):
+        if cmd.startswith("FIND"):
             table, condition = self._extract_table_and_condition(uql)
             order_by = self._extract_order_by(uql)
             limit = self._extract_limit(uql)
@@ -38,14 +39,14 @@ class BaseSQLAdapter(BaseAdapter):
                 query += f" LIMIT {limit}"
             return query + ";"
 
-        elif uql.startswith("CREATE"):
+        elif cmd.startswith("CREATE"):
             table, fields = self._extract_table_and_body(uql)
             self._ensure_table(table, fields)
             columns = ", ".join([self._quote(c) for c in fields.keys()])
             values = ", ".join([self._format_value(v) for v in fields.values()])
             return f"INSERT INTO {self._quote(table)} ({columns}) VALUES ({values});"
 
-        elif uql.startswith("DELETE"):
+        elif cmd.startswith("DELETE"):
             table, condition = self._extract_table_and_condition(uql)
             return f"DELETE FROM {self._quote(table)} WHERE {condition};"
 
@@ -94,7 +95,7 @@ class BaseSQLAdapter(BaseAdapter):
         return match.group(1), self._parse_key_value_pairs(match.group(2))
 
     def _parse_key_value_pairs(self, fields):
-        return {k.strip(): v.strip() for k, v in (pair.split(":") for pair in fields.split(","))}
+        return {k.strip(): v.strip() for k, v in (pair.split(":", 1) for pair in fields.split(","))}
 
     # ---------- Abstract methods (override in child) ----------
     def _quote(self, name):
@@ -105,3 +106,4 @@ class BaseSQLAdapter(BaseAdapter):
 
     def _ensure_table(self, table_name, fields):
         raise NotImplementedError("Must implement in child adapters")
+
