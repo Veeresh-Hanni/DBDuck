@@ -1,8 +1,9 @@
-[bandit]
-exclude =
-    tests,
-    .venv,
-    wslvenv,
-    DBDuck/udom/adapters/sql,
-    DBDuck/udom/adapters/sql_adapter.py
-skips = B101
+# .bandit (YAML format)
+excludes:
+  - tests
+  - .venv
+  - wslvenv
+  - DBDuck/udom/adapters/sql
+  - DBDuck/udom/adapters/sql_adapter.py
+skips:
+  - B101
