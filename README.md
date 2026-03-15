@@ -273,11 +273,6 @@ Event.ensure_indexes()
 See `docs/INITIALIZE.md` for full initialization steps.
 
 ## Logo
-
-Place your logo file here:
-
-- `docs/assets/dbduck-logo.png`
-
 <p align="center">
   <img src="docs/assets/dbduck-logo.png" alt="DBDuck Logo" width="320" bg="black" />
 </p>

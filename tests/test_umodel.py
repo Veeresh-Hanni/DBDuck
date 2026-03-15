@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date, datetime, time
+
 import pytest
 
 from DBDuck import UDOM
@@ -27,6 +29,14 @@ class StrictProfile(UModel):
     active: bool
     tags: list[str]
     nickname: str | None
+
+
+class CalendarEvent(UModel):
+    __entity__ = "calendar_events"
+    title: str
+    starts_at: datetime
+    event_date: date
+    reminder_at: time | None
 
 
 def test_umodel_sql_save_find_and_find_one(tmp_path) -> None:
@@ -107,3 +117,37 @@ def test_umodel_bulk_create_mapping_validation(tmp_path) -> None:
                 {"age": "bad", "score": "1.2", "active": True, "tags": ["b"], "nickname": None},
             ]
         )
+
+
+def test_umodel_date_time_roundtrip_sql(tmp_path) -> None:
+    db_file = tmp_path / "umodel_datetime.db"
+    db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
+    CalendarEvent.bind(db)
+
+    event = CalendarEvent(
+        title="Launch",
+        starts_at="2026-03-15T09:30:00",
+        event_date="2026-03-16",
+        reminder_at="08:45:00",
+    )
+    event.save()
+
+    one = CalendarEvent.find_one(where={"title": "Launch"})
+    assert one is not None
+    assert isinstance(one.starts_at, datetime)
+    assert isinstance(one.event_date, date)
+    assert isinstance(one.reminder_at, time)
+    assert one.starts_at == datetime(2026, 3, 15, 9, 30, 0)
+    assert one.event_date == date(2026, 3, 16)
+    assert one.reminder_at == time(8, 45, 0)
+
+
+def test_umodel_date_time_validation_error() -> None:
+    bad = CalendarEvent(
+        title="Broken",
+        starts_at="not-a-datetime",
+        event_date="2026-03-16",
+        reminder_at=None,
+    )
+    with pytest.raises(QueryError, match="starts_at"):
+        bad.validate()

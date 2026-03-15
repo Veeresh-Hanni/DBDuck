@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import types
+from datetime import date, datetime, time
 from typing import Any, Mapping, TypeVar, Union, get_args, get_origin, get_type_hints
 
 from ...core import SensitiveFieldProtector
@@ -291,7 +293,7 @@ class UModel:
         origin = get_origin(expected_type)
         args = get_args(expected_type)
 
-        if origin is Union:
+        if origin in (Union, types.UnionType):
             if type(None) in args and value is None:
                 return None
             # Try each variant except None.
@@ -371,6 +373,38 @@ class UModel:
                 raise QueryError(f"Field '{field}' must be str")
             return str(value)
 
+        if expected_type is datetime:
+            if isinstance(value, datetime):
+                return value
+            if isinstance(value, str):
+                try:
+                    return datetime.fromisoformat(value.strip())
+                except ValueError as exc:
+                    raise QueryError(f"Field '{field}' must be datetime") from exc
+            raise QueryError(f"Field '{field}' must be datetime")
+
+        if expected_type is date:
+            if isinstance(value, datetime):
+                return value.date()
+            if isinstance(value, date):
+                return value
+            if isinstance(value, str):
+                try:
+                    return date.fromisoformat(value.strip())
+                except ValueError as exc:
+                    raise QueryError(f"Field '{field}' must be date") from exc
+            raise QueryError(f"Field '{field}' must be date")
+
+        if expected_type is time:
+            if isinstance(value, time):
+                return value
+            if isinstance(value, str):
+                try:
+                    return time.fromisoformat(value.strip())
+                except ValueError as exc:
+                    raise QueryError(f"Field '{field}' must be time") from exc
+            raise QueryError(f"Field '{field}' must be time")
+
         if isinstance(expected_type, type):
             if isinstance(value, expected_type):
                 return value
@@ -383,15 +417,29 @@ class UModel:
 
     @classmethod
     def _prepare_payload_for_db(cls, payload: Mapping[str, Any], db_type: str) -> dict[str, Any]:
-        if db_type != "sql":
-            return dict(payload)
         normalized: dict[str, Any] = {}
         for key, value in payload.items():
-            if isinstance(value, (list, tuple, dict)):
-                normalized[key] = json.dumps(value, separators=(",", ":"))
-            else:
-                normalized[key] = value
+            normalized[key] = cls._serialize_for_db(value, db_type)
         return normalized
+
+    @classmethod
+    def _serialize_for_db(cls, value: Any, db_type: str) -> Any:
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        if isinstance(value, time):
+            return value.isoformat()
+        if isinstance(value, list):
+            serialized = [cls._serialize_for_db(item, db_type) for item in value]
+            return json.dumps(serialized, separators=(",", ":")) if db_type == "sql" else serialized
+        if isinstance(value, tuple):
+            serialized = [cls._serialize_for_db(item, db_type) for item in value]
+            return json.dumps(serialized, separators=(",", ":")) if db_type == "sql" else tuple(serialized)
+        if isinstance(value, dict):
+            serialized = {str(k): cls._serialize_for_db(v, db_type) for k, v in value.items()}
+            return json.dumps(serialized, separators=(",", ":")) if db_type == "sql" else serialized
+        return value
 
     @classmethod
     def _looks_like_record(cls, payload: Mapping[str, Any]) -> bool:
@@ -422,7 +470,7 @@ class UModel:
     @staticmethod
     def _is_optional_type(expected_type: Any) -> bool:
         origin = get_origin(expected_type)
-        if origin is Union:
+        if origin in (Union, types.UnionType):
             return type(None) in get_args(expected_type)
         args = get_args(expected_type)
         if args:

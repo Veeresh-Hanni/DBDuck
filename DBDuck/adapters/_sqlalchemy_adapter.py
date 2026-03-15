@@ -6,7 +6,7 @@ import builtins
 import re
 from typing import Any, Mapping, Sequence
 
-from sqlalchemy import inspect as sa_inspect, text
+from sqlalchemy import MetaData, Table, and_, bindparam, delete as sa_delete, func, insert, inspect as sa_inspect, select, text, update as sa_update
 from sqlalchemy.exc import DisconnectionError, InterfaceError, OperationalError, SQLAlchemyError
 
 from ..core.base_adapter import BaseAdapter
@@ -52,6 +52,8 @@ class SQLAlchemyAdapter(BaseAdapter):
         # Placeholder for future opt-in read cache (e.g. LRU/TTL/Redis-backed).
         self._query_cache: dict[str, Any] = {}
         self._column_type_cache: dict[str, dict[str, str]] = {}
+        self._metadata = MetaData()
+        self._table_cache: dict[str, Table] = {}
 
     def _quote(self, name: str) -> str:
         raise NotImplementedError
@@ -146,6 +148,71 @@ class SQLAlchemyAdapter(BaseAdapter):
         sql = f"CREATE TABLE IF NOT EXISTS {quoted_table} ({', '.join(cols)})"
         self.run_native(sql)
         self._column_type_cache.pop(entity, None)
+        self._table_cache.pop(entity, None)
+
+    def _get_table(self, entity: str) -> Table:
+        cached = self._table_cache.get(entity)
+        if cached is not None:
+            return cached
+        table = Table(entity, self._metadata, autoload_with=self.engine, extend_existing=True)
+        self._table_cache[entity] = table
+        return table
+
+    def _resolve_column(self, table: Table, field: str):
+        self._validate_identifier(field)
+        try:
+            return table.c[field]
+        except KeyError as exc:
+            raise QueryError(f"Unknown field '{field}' for entity '{table.name}'") from exc
+
+    def _parse_order_by_components(self, order_by: str) -> tuple[str, str]:
+        safe_order = order_by.strip()
+        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)(?:\s+(ASC|DESC))?", safe_order, re.IGNORECASE)
+        if not match:
+            raise QueryError("Invalid order_by clause")
+        field, direction = match.group(1), (match.group(2) or "ASC").upper()
+        self._validate_identifier(field)
+        return field, direction
+
+    def _build_where_expression(
+        self,
+        entity: str,
+        table: Table,
+        where: Mapping[str, Any] | str | None,
+    ) -> tuple[Any | None, dict[str, Any]]:
+        if where is None:
+            return None, {}
+        if isinstance(where, str):
+            where_sql, params = self._build_parameterized_where_from_string(entity, where)
+            if not where_sql:
+                return None, {}
+            return text(where_sql.removeprefix(" WHERE ")), params
+        if not isinstance(where, Mapping):
+            raise QueryError("where must be a mapping, string, or None")
+        conditions = []
+        params: dict[str, Any] = {}
+        for idx, (key, value) in enumerate(where.items()):
+            column = self._resolve_column(table, key)
+            pname = f"w_{idx}"
+            conditions.append(column == bindparam(pname))
+            params[pname] = self._normalize_value_for_column(entity, key, value)
+        if not conditions:
+            return None, {}
+        return and_(*conditions), params
+
+    def _build_having_expression(
+        self,
+        entity: str,
+        table: Table,
+        having: Mapping[str, Any] | str | None,
+    ) -> tuple[Any | None, dict[str, Any]]:
+        return self._build_where_expression(entity, table, having)
+
+    def _build_having_clause(self, entity: str, having: Mapping[str, Any] | str | None) -> tuple[str, dict[str, Any]]:
+        where_sql, params = self._build_where_clause(entity, having)
+        if not where_sql:
+            return "", {}
+        return " HAVING " + where_sql.removeprefix(" WHERE "), params
 
     def _active_connection(self):
         return self._tx.get_connection()
@@ -166,20 +233,26 @@ class SQLAlchemyAdapter(BaseAdapter):
         return {"rows_affected": int(result.rowcount or 0)}
 
     def run_native(
-        self, query: str, params: Mapping[str, Any] | Sequence[Mapping[str, Any]] | None = None
+        self, query: Any, params: Mapping[str, Any] | Sequence[Mapping[str, Any]] | None = None
     ) -> Any:
-        if not isinstance(query, str) or not query.strip():
-            raise QueryError("Query must be a non-empty string")
+        if isinstance(query, str):
+            if not query.strip():
+                raise QueryError("Query must be a non-empty string")
+            executable = text(query)
+            query_text = query
+        else:
+            executable = query
+            query_text = str(query)
         result = None
         try:
             log_event(self._logger, 20, "Executing native SQL", event="query.execute", db=self.DIALECT)
             conn = self._active_connection()
             if conn is not None:
-                result = conn.execute(text(query), params or {})
-                return self._consume_result(query, result)
+                result = conn.execute(executable, params or {})
+                return self._consume_result(query_text, result)
             with self.engine.begin() as auto_conn:
-                result = auto_conn.execute(text(query), params or {})
-                return self._consume_result(query, result)
+                result = auto_conn.execute(executable, params or {})
+                return self._consume_result(query_text, result)
         except SQLAlchemyError as exc:
             log_event(self._logger, 40, "Query failed", event="query.error", db=self.DIALECT)
             log_internal_debug(
@@ -208,8 +281,14 @@ class SQLAlchemyAdapter(BaseAdapter):
             if result is not None:
                 try:
                     result.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log_internal_debug(
+                        self._logger,
+                        "Result close failed",
+                        event="query.cleanup.internal",
+                        db=self.DIALECT,
+                        exc=exc,
+                    )
 
     @classmethod
     def _clean_error_message(cls, exc: Exception) -> str:
@@ -289,16 +368,10 @@ class SQLAlchemyAdapter(BaseAdapter):
         entity = self._validate_identifier(entity)
         self._validate_data(data)
         self._ensure_table(entity, data)
+        table = self._get_table(entity)
         normalized_data = {key: self._normalize_value_for_column(entity, key, value) for key, value in data.items()}
-        cols = list(data.keys())
-        key = f"insert:{entity}:{','.join(cols)}"
-        sql = self._prepared_cache.get(key)
-        if sql is None:
-            col_sql = ", ".join(self._quote(c) for c in cols)
-            val_sql = ", ".join(f":{c}" for c in cols)
-            sql = f"INSERT INTO {self._quote(entity)} ({col_sql}) VALUES ({val_sql})"
-            self._prepared_cache[key] = sql
-        return self.run_native(sql, params=normalized_data)
+        stmt = insert(table).values(**normalized_data)
+        return self.run_native(stmt)
 
     def create_many(self, entity: str, rows: list[Mapping[str, Any]]) -> Any:
         entity = self._validate_identifier(entity)
@@ -312,17 +385,12 @@ class SQLAlchemyAdapter(BaseAdapter):
             if list(row.keys()) != cols:
                 raise QueryError("All rows in create_many() must have same field order")
         self._ensure_table(entity, first)
+        table = self._get_table(entity)
         normalized_rows = [
             {key: self._normalize_value_for_column(entity, key, value) for key, value in row.items()} for row in rows
         ]
-        key = f"insert_many:{entity}:{','.join(cols)}"
-        sql = self._prepared_cache.get(key)
-        if sql is None:
-            col_sql = ", ".join(self._quote(c) for c in cols)
-            val_sql = ", ".join(f":{c}" for c in cols)
-            sql = f"INSERT INTO {self._quote(entity)} ({col_sql}) VALUES ({val_sql})"
-            self._prepared_cache[key] = sql
-        return self.run_native(sql, params=normalized_rows)
+        stmt = insert(table)
+        return self.run_native(stmt, params=normalized_rows)
 
     def _build_where_clause(
         self, entity: str, where: Mapping[str, Any] | str | None
@@ -442,27 +510,24 @@ class SQLAlchemyAdapter(BaseAdapter):
         offset: int | None = None,
     ) -> Any:
         entity = self._validate_identifier(entity)
-        where_sql, params = self._build_where_clause(entity, where)
-        sql = f"SELECT * FROM {self._quote(entity)}{where_sql}"
+        table = self._get_table(entity)
+        where_expr, params = self._build_where_expression(entity, table, where)
+        stmt = select(table)
+        if where_expr is not None:
+            stmt = stmt.where(where_expr)
         if order_by:
-            safe_order = order_by.strip()
-            match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)(?:\s+(ASC|DESC))?", safe_order, re.IGNORECASE)
-            if not match:
-                raise QueryError("Invalid order_by clause")
-            field, direction = match.group(1), (match.group(2) or "ASC").upper()
-            self._validate_identifier(field)
-            sql += f" ORDER BY {self._quote(field)} {direction}"
+            field, direction = self._parse_order_by_components(order_by)
+            column = self._resolve_column(table, field)
+            stmt = stmt.order_by(column.asc() if direction == "ASC" else column.desc())
         if limit is not None:
             if not isinstance(limit, int) or limit <= 0:
                 raise QueryError("limit must be a positive integer")
-            sql += " LIMIT :limit_value"
-            params["limit_value"] = limit
+            stmt = stmt.limit(limit)
         if offset is not None:
             if not isinstance(offset, int) or offset < 0:
                 raise QueryError("offset must be a non-negative integer")
-            sql += " OFFSET :offset_value"
-            params["offset_value"] = offset
-        return self.run_native(sql, params=params)
+            stmt = stmt.offset(offset)
+        return self.run_native(stmt, params=params)
 
     def paginate(
         self,
@@ -477,34 +542,37 @@ class SQLAlchemyAdapter(BaseAdapter):
 
     def delete(self, entity: str, where: Mapping[str, Any] | str) -> Any:
         entity = self._validate_identifier(entity)
-        where_sql, params = self._build_where_clause(entity, where)
-        if not where_sql:
+        table = self._get_table(entity)
+        where_expr, params = self._build_where_expression(entity, table, where)
+        if where_expr is None:
             raise QueryError("delete() requires a non-empty where condition")
-        sql = f"DELETE FROM {self._quote(entity)}{where_sql}"
-        return self.run_native(sql, params=params)
+        stmt = sa_delete(table).where(where_expr)
+        return self.run_native(stmt, params=params)
 
     def update(self, entity: str, data: Mapping[str, Any], where: Mapping[str, Any] | str) -> Any:
         entity = self._validate_identifier(entity)
         self._validate_data(data)
-        where_sql, where_params = self._build_where_clause(entity, where)
-        if not where_sql:
+        table = self._get_table(entity)
+        where_expr, where_params = self._build_where_expression(entity, table, where)
+        if where_expr is None:
             raise QueryError("update() requires a non-empty where condition")
-        set_parts = []
-        params: dict[str, Any] = {}
-        for idx, (key, value) in enumerate(data.items()):
+        normalized_data = {}
+        for key, value in data.items():
             self._validate_identifier(key)
-            pname = f"u_{idx}"
-            set_parts.append(f"{self._quote(key)} = :{pname}")
-            params[pname] = self._normalize_value_for_column(entity, key, value)
-        params.update(where_params)
-        sql = f"UPDATE {self._quote(entity)} SET {', '.join(set_parts)}{where_sql}"
-        return self.run_native(sql, params=params)
+            self._resolve_column(table, key)
+            normalized_data[key] = self._normalize_value_for_column(entity, key, value)
+        params = dict(where_params)
+        stmt = sa_update(table).where(where_expr).values(**normalized_data)
+        return self.run_native(stmt, params=params)
 
     def count(self, entity: str, where: Mapping[str, Any] | str | None = None) -> int:
         entity = self._validate_identifier(entity)
-        where_sql, params = self._build_where_clause(entity, where)
-        sql = f"SELECT COUNT(*) AS total FROM {self._quote(entity)}{where_sql}"
-        rows = self.run_native(sql, params=params)
+        table = self._get_table(entity)
+        where_expr, params = self._build_where_expression(entity, table, where)
+        stmt = select(func.count().label("total")).select_from(table)
+        if where_expr is not None:
+            stmt = stmt.where(where_expr)
+        rows = self.run_native(stmt, params=params)
         if not rows:
             return 0
         value = rows[0].get("total", 0)
@@ -526,7 +594,26 @@ class SQLAlchemyAdapter(BaseAdapter):
             normalized.append(self._validate_identifier(field))
         return normalized
 
-    def _normalize_aggregate_metric(self, alias: str, metric: Any) -> str:
+    def _validate_aggregate_metric_format(self, alias: str, metric: Any) -> None:
+        alias_name = self._validate_identifier(alias)
+        if isinstance(metric, str):
+            match = self._AGG_FUNC_RE.fullmatch(metric)
+            if not match:
+                raise QueryError("Invalid aggregate metric format; expected e.g. count(*), sum(field)")
+            return
+        if isinstance(metric, Mapping):
+            op = str(metric.get("op", "")).strip().upper()
+            field = str(metric.get("field", "*")).strip()
+            if not op:
+                raise QueryError(f"Aggregate metric '{alias_name}' requires op")
+            if op not in {"COUNT", "SUM", "AVG", "MIN", "MAX"}:
+                raise QueryError(f"Unsupported aggregate op: {op}")
+            if field != "*":
+                self._validate_identifier(field)
+            return
+        raise QueryError("metrics values must be strings like 'count(*)' or mappings")
+
+    def _normalize_aggregate_metric(self, alias: str, metric: Any, table: Table | None = None):
         alias_name = self._validate_identifier(alias)
         if isinstance(metric, str):
             match = self._AGG_FUNC_RE.fullmatch(metric)
@@ -547,14 +634,22 @@ class SQLAlchemyAdapter(BaseAdapter):
             raise QueryError("metrics values must be strings like 'count(*)' or mappings")
         if field == "*" and op != "COUNT":
             raise QueryError(f"{op}(*) is not supported; use COUNT(*) or specify a field")
-        field_sql = "*" if field == "*" else self._quote(field)
-        return f"{op}({field_sql}) AS {self._quote(alias_name)}"
-
-    def _build_having_clause(self, entity: str, having: Mapping[str, Any] | str | None) -> tuple[str, dict[str, Any]]:
-        where_sql, params = self._build_where_clause(entity, having)
-        if not where_sql:
-            return "", {}
-        return " HAVING " + where_sql.removeprefix(" WHERE "), params
+        if field == "*":
+            metric_column = None
+        else:
+            if table is None:
+                raise QueryError(f"Aggregate metric '{alias_name}' requires a resolved table")
+            metric_column = self._resolve_column(table, field)
+        aggregate_map = {
+            "COUNT": func.count,
+            "SUM": func.sum,
+            "AVG": func.avg,
+            "MIN": func.min,
+            "MAX": func.max,
+        }
+        builder = aggregate_map[op]
+        expression = builder() if metric_column is None else builder(metric_column)
+        return expression.label(alias_name)
 
     def aggregate(
         self,
@@ -572,28 +667,54 @@ class SQLAlchemyAdapter(BaseAdapter):
             raise QueryError("pipeline is only supported for NoSQL aggregate")
         entity = self._validate_identifier(entity)
         group_fields = self._normalize_group_by(group_by)
-        select_parts = [self._quote(field) for field in group_fields]
+        metrics = metrics or {}
+        metric_aliases: dict[str, Any] = {}
+        for alias, metric in metrics.items():
+            self._validate_aggregate_metric_format(alias, metric)
+        table = self._get_table(entity)
+        group_columns = [self._resolve_column(table, field) for field in group_fields]
+        select_parts = list(group_columns)
         if metrics:
             for alias, metric in metrics.items():
-                select_parts.append(self._normalize_aggregate_metric(alias, metric))
+                metric_expr = self._normalize_aggregate_metric(alias, metric, table)
+                metric_aliases[alias] = metric_expr
+                select_parts.append(metric_expr)
         if not select_parts:
             raise QueryError("aggregate requires at least one group_by field or metric")
-        where_sql, params = self._build_where_clause(entity, where)
-        sql = f"SELECT {', '.join(select_parts)} FROM {self._quote(entity)}{where_sql}"
+        where_expr, params = self._build_where_expression(entity, table, where)
+        stmt = select(*select_parts).select_from(table)
+        if where_expr is not None:
+            stmt = stmt.where(where_expr)
         if group_fields:
-            sql += " GROUP BY " + ", ".join(self._quote(field) for field in group_fields)
-        having_sql, having_params = self._build_having_clause(entity, having)
-        if having_sql:
-            sql += having_sql
+            stmt = stmt.group_by(*group_columns)
+        if isinstance(having, Mapping):
+            having_conditions = []
+            having_params: dict[str, Any] = {}
+            for idx, (key, value) in enumerate(having.items()):
+                self._validate_identifier(key)
+                pname = f"h_{idx}"
+                if key in metric_aliases:
+                    having_conditions.append(metric_aliases[key] == bindparam(pname))
+                    having_params[pname] = value
+                else:
+                    column = self._resolve_column(table, key)
+                    having_conditions.append(column == bindparam(pname))
+                    having_params[pname] = self._normalize_value_for_column(entity, key, value)
+            having_expr = and_(*having_conditions) if having_conditions else None
+        else:
+            having_expr, having_params = self._build_having_expression(entity, table, having)
+        if having_expr is not None:
+            stmt = stmt.having(having_expr)
             params.update(having_params)
         if order_by:
-            sql += f" ORDER BY {self._validate_order_by_clause(order_by)}"
+            field, direction = self._parse_order_by_components(order_by)
+            column = self._resolve_column(table, field)
+            stmt = stmt.order_by(column.asc() if direction == "ASC" else column.desc())
         if limit is not None:
             if not isinstance(limit, int) or limit <= 0:
                 raise QueryError("limit must be a positive integer")
-            sql += " LIMIT :limit_value"
-            params["limit_value"] = limit
-        return self.run_native(sql, params=params)
+            stmt = stmt.limit(limit)
+        return self.run_native(stmt, params=params)
 
     def convert_uql(self, uql_query: str) -> str:
         uql = uql_query.strip()
@@ -610,7 +731,7 @@ class SQLAlchemyAdapter(BaseAdapter):
             where = match.group(2)
             order_by = match.group(3)
             limit = int(match.group(4)) if match.group(4) else None
-            sql = f"SELECT * FROM {self._quote(self._validate_identifier(entity))}"
+            sql = f"SELECT * FROM {self._quote(self._validate_identifier(entity))}"  # nosec B608
             if where:
                 safe_where = self._validate_uql_where_clause(where)
                 sql += f" WHERE {safe_where}"
@@ -632,7 +753,7 @@ class SQLAlchemyAdapter(BaseAdapter):
             if not where:
                 raise QueryError("DELETE UQL requires WHERE")
             safe_where = self._validate_uql_where_clause(where)
-            return f"DELETE FROM {self._quote(entity)} WHERE {safe_where}"
+            return f"DELETE FROM {self._quote(entity)} WHERE {safe_where}"  # nosec B608
         if upper.startswith("CREATE "):
             match = re.match(r"CREATE\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{(.+)\}$", uql, flags=re.IGNORECASE)
             if not match:
@@ -650,7 +771,7 @@ class SQLAlchemyAdapter(BaseAdapter):
                 cols.append(self._quote(key))
                 vals.append(raw.strip())
             self._ensure_table(entity, {c.strip('"`[]'): "" for c in cols})
-            return f"INSERT INTO {self._quote(entity)} ({', '.join(cols)}) VALUES ({', '.join(vals)})"
+            return f"INSERT INTO {self._quote(entity)} ({', '.join(cols)}) VALUES ({', '.join(vals)})"  # nosec B608
         raise QueryError("Unsupported UQL command")
 
     def begin(self):

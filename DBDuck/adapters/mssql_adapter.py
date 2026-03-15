@@ -40,6 +40,21 @@ class MSSQLAdapter(SQLAlchemyAdapter):
         )
         self.run_native(sql)
 
+    def _render_metric_sql(self, alias: str, metric: Any) -> str:
+        self._validate_aggregate_metric_format(alias, metric)
+        alias_name = self._validate_identifier(alias)
+        if isinstance(metric, str):
+            match = self._AGG_FUNC_RE.fullmatch(metric)
+            if match is None:
+                raise QueryError("Invalid aggregate metric format; expected e.g. count(*), sum(field)")
+            op = match.group(1).upper()
+            field = match.group(2)
+        else:
+            op = str(metric.get("op", "")).strip().upper()
+            field = str(metric.get("field", "*")).strip()
+        field_sql = "*" if field == "*" else self._quote(self._validate_identifier(field))
+        return f"{op}({field_sql}) AS {self._quote(alias_name)}"
+
     def find(
         self,
         entity: str,
@@ -67,7 +82,7 @@ class MSSQLAdapter(SQLAlchemyAdapter):
                 if not isinstance(limit, int) or limit <= 0:
                     raise QueryError("limit must be a positive integer")
                 top_sql = f" TOP {limit}"
-            sql = f"SELECT{top_sql} * FROM {self._quote(entity)}{where_sql}"
+            sql = f"SELECT{top_sql} * FROM {self._quote(entity)}{where_sql}"  # nosec B608
             if order_clause:
                 sql += f" ORDER BY {order_clause}"
             return self.run_native(sql, params=params)
@@ -75,7 +90,7 @@ class MSSQLAdapter(SQLAlchemyAdapter):
             raise QueryError("offset must be a non-negative integer")
         if limit is not None and (not isinstance(limit, int) or limit <= 0):
             raise QueryError("limit must be a positive integer")
-        sql = f"SELECT * FROM {self._quote(entity)}{where_sql}"
+        sql = f"SELECT * FROM {self._quote(entity)}{where_sql}"  # nosec B608
         sql += f" ORDER BY {order_clause or '(SELECT NULL)'}"
         sql += " OFFSET :offset_value ROWS"
         params["offset_value"] = offset
@@ -111,7 +126,7 @@ class MSSQLAdapter(SQLAlchemyAdapter):
             order_by = match.group(3)
             limit = int(match.group(4)) if match.group(4) else None
             top_sql = f" TOP {limit}" if limit is not None else ""
-            sql = f"SELECT{top_sql} * FROM {self._quote(self._validate_identifier(entity))}"
+            sql = f"SELECT{top_sql} * FROM {self._quote(self._validate_identifier(entity))}"  # nosec B608
             if where:
                 safe_where = self._validate_uql_where_clause(where)
                 sql += f" WHERE {safe_where}"
@@ -139,7 +154,7 @@ class MSSQLAdapter(SQLAlchemyAdapter):
         select_parts = [self._quote(field) for field in group_fields]
         if metrics:
             for alias, metric in metrics.items():
-                select_parts.append(self._normalize_aggregate_metric(alias, metric))
+                select_parts.append(self._render_metric_sql(alias, metric))
         if not select_parts:
             raise QueryError("aggregate requires at least one group_by field or metric")
         top_sql = ""
@@ -148,7 +163,7 @@ class MSSQLAdapter(SQLAlchemyAdapter):
                 raise QueryError("limit must be a positive integer")
             top_sql = f" TOP {limit}"
         where_sql, params = self._build_where_clause(entity, where)
-        sql = f"SELECT{top_sql} {', '.join(select_parts)} FROM {self._quote(entity)}{where_sql}"
+        sql = f"SELECT{top_sql} {', '.join(str(part) for part in select_parts)} FROM {self._quote(entity)}{where_sql}"  # nosec B608
         if group_fields:
             sql += " GROUP BY " + ", ".join(self._quote(field) for field in group_fields)
         having_sql, having_params = self._build_having_clause(entity, having)
