@@ -25,7 +25,6 @@ class NoSQLAdapter(BaseAdapter):
         self.db_instance = db_instance
         self.url = url or "mongodb://localhost:27017/udom"
         self.options = options
-        self._allow_unsafe_where_strings = bool(options.get("allow_unsafe_where_strings", False))
         self._retry_attempts = max(1, int(options.get("retry_attempts", 3)))
         self._retry_backoff_ms = max(0, int(options.get("retry_backoff_ms", 100)))
         self._client = None

@@ -18,4 +18,5 @@ db = UDOM(
 # print(db.create("Customer", {"name": "Veeresh", "age": 23, "active": True}))
 # print(db.find("Customer", where={"active": True}, limit=5))
 # # print(db.delete("Customer", where={"name": "Veeresh"}))
+db.create
 print(db.ping())

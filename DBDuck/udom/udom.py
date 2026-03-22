@@ -429,6 +429,67 @@ class UDOM:
             raise QueryError("Current adapter does not support ensure_indexes")
         return self.adapter.ensure_indexes(entity_name, indexes)
 
+    def create_relationship(
+        self,
+        from_label: str,
+        from_id: Any,
+        rel_type: str,
+        to_label: str,
+        to_id: Any,
+        props: Mapping[str, Any] | None = None,
+    ) -> Any:
+        if self.db_type != "graph" or not hasattr(self.adapter, "create_relationship"):
+            raise QueryError("create_relationship is currently supported for graph adapters only")
+        return self.adapter.create_relationship(from_label, from_id, rel_type, to_label, to_id, props)
+
+    def find_related(
+        self,
+        entity: str,
+        id: Any,
+        rel_type: str,
+        direction: str = "out",
+        target_label: str | None = None,
+    ) -> Any:
+        if self.db_type != "graph" or not hasattr(self.adapter, "find_related"):
+            raise QueryError("find_related is currently supported for graph adapters only")
+        return self.adapter.find_related(entity, id, rel_type, direction, target_label)
+
+    def shortest_path(self, from_label: str, from_id: Any, to_label: str, to_id: Any) -> Any:
+        if self.db_type != "graph" or not hasattr(self.adapter, "shortest_path"):
+            raise QueryError("shortest_path is currently supported for graph adapters only")
+        return self.adapter.shortest_path(from_label, from_id, to_label, to_id)
+
+    def create_collection(self, entity: str, vector_size: int, distance: str = "cosine") -> Any:
+        if self.db_type != "vector" or not hasattr(self.adapter, "create_collection"):
+            raise QueryError("create_collection is currently supported for vector adapters only")
+        return self.adapter.create_collection(entity, vector_size, distance)
+
+    def collection_info(self, entity: str) -> Any:
+        if self.db_type != "vector" or not hasattr(self.adapter, "collection_info"):
+            raise QueryError("collection_info is currently supported for vector adapters only")
+        return self.adapter.collection_info(entity)
+
+    def upsert_vector(self, entity: str, id: Any, vector: Any, metadata: Mapping[str, Any] | None = None) -> Any:
+        if self.db_type != "vector" or not hasattr(self.adapter, "upsert_vector"):
+            raise QueryError("upsert_vector is currently supported for vector adapters only")
+        return self.adapter.upsert_vector(entity, id, vector, metadata)
+
+    def search_similar(
+        self,
+        entity: str,
+        vector: Any,
+        top_k: int = 10,
+        filter: Mapping[str, Any] | None = None,
+    ) -> Any:
+        if self.db_type != "vector" or not hasattr(self.adapter, "search_similar"):
+            raise QueryError("search_similar is currently supported for vector adapters only")
+        return self.adapter.search_similar(entity, vector, top_k, filter)
+
+    def delete_vector(self, entity: str, id: Any) -> Any:
+        if self.db_type != "vector" or not hasattr(self.adapter, "delete_vector"):
+            raise QueryError("delete_vector is currently supported for vector adapters only")
+        return self.adapter.delete_vector(entity, id)
+
     def create_view(self, name: str, select_query: str, *, replace: bool = False) -> Any:
         view_name = SchemaValidator.validate_entity(self._normalize_entity(name))
         if self.db_type != "sql":

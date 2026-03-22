@@ -1,4 +1,4 @@
-# SQL
+﻿# SQL
 sqlalchemy
 pymysql
 psycopg2-binary
@@ -8,8 +8,7 @@ pyodbc
 pymongo
 mongoengine
 redis
-boto3
-google-cloud-firestore
+
 
 # Graph
 neo4j

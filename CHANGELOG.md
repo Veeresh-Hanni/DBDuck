@@ -1,61 +1,33 @@
 # Changelog
 
-## 0.1.0
+## v0.2.0 - 2026-03-20
 
 ### Added
-
-- Adapter-driven architecture for SQL and NoSQL runtime paths.
-- Thread-safe SQL connection manager and Mongo connection manager.
-- SQL + Mongo transaction support with context manager patterns.
-- Central schema validation for create/find/delete operations.
-- Structured logging for query, transaction, and connection events.
-- Custom exception hierarchy and adapter-level exception mapping.
-- Batch insert support via `create_many` for SQL and Mongo.
-- Health/lifecycle hooks: `ping()` and `close()`.
-- GitHub Actions test workflow.
-- Runtime settings module with env-driven secure defaults.
-- SQL migration baseline scaffold via Alembic (`migrations/sql`).
-- Security CI checks (`pip-audit`, `bandit`).
-- `.env.example` for backend deployment configuration.
-- Mongo retry wrapper for transient operation errors.
-- Mongo index management APIs (`ensure_indexes`, model `__indexes__` support).
-- Mongo integration test scaffold in `tests/integration/`.
-- Production-capable backend support for `SQLite`, `MySQL`, `PostgreSQL`, `SQL Server`, and `MongoDB`.
-- Automatic BCrypt hashing for sensitive fields on SQL and Mongo write paths.
-- `verify_secret(...)` helper for validating plaintext secrets against stored BCrypt hashes.
-- Model-level sensitive field hashing via `UModel.__sensitive_fields__`.
-- Model-level `datetime`, `date`, and `time` coercion/serialization in `UModel`.
-- Security audit log persistence to `security_logs`.
-- In-memory rate limiting controls for UDOM operations.
-- Native SQL and Mongo pagination support for `find_page()`.
-- Real backend integration test scaffolding for `MySQL`, `PostgreSQL`, `SQL Server`, and `MongoDB`.
-- Integration coverage design for:
-  - CRUD roundtrip
-  - transaction commit/rollback
-  - native pagination
-  - connection-failure mapping
+- `AsyncUDOM` with awaitable CRUD, pagination, aggregation, transaction, and lifecycle methods.
+- Real Qdrant-backed vector adapter with collection management, vector upsert, similarity search, and count/delete support.
+- Real Neo4j-capable graph adapter with parameterized Cypher for CRUD, relationships, related-node lookups, and shortest-path queries.
+- `dbduck` CLI with `ping`, `shell`, `inspect`, `migrate`, and `version` commands.
+- Async and vector test suites.
 
 ### Changed
+- Hardened SQLAlchemy UQL translation so `CREATE`, `FIND`, and `DELETE` use parameterized execution paths.
+- Removed the unsafe `allow_unsafe_where_strings` bypass path.
+- Hardened MSSQL existence checks with parameterized `OBJECT_ID` lookups.
+- Hardened legacy SQL adapters to use parameterized conditions and masked execution errors.
+- Hardened graph UQL parsing and condition conversion to reject injected labels, field names, and raw Cypher fragments.
+- Hardened UQL parser key/value parsing and malformed query handling.
+- Hardened Mongo operator detection and blocked `$` operator values.
+- Tightened BCrypt hash detection to require valid BCrypt length.
+- Strengthened rate limiting to block direct writes to the audit entity and support per-caller buckets.
+- Added pagination offset caps and UQL literal sanitization for large-offset and control-character abuse.
 
-- `UDOM` now routes SQL and NoSQL CRUD directly to adapters.
-- SQL where-clause handling now parameterizes parsed string expressions.
-- Mongo where-clause parsing supports safe operators and order/limit handling.
-- SQL and Mongo execution paths now mask raw driver/database errors from callers.
-- Structured logs no longer expose raw SQL values or sensitive parameters in standard output.
-- Legacy SQL adapter UQL conversion now parameterizes `WHERE` literals and insert values via bound params.
-- Legacy SQL adapters now share one common parameterization helper to keep behavior aligned.
+### Security
+- Closed BUG-1 through BUG-28 from the injection hardening audit.
+- Added a dedicated injection regression suite covering every listed vulnerability.
+- Preserved masked public errors while keeping internal debug logs for maintainers.
 
-### Tests
+### Packaging
+- Bumped package version to `0.2.0`.
+- Added PyPI publish workflow and `dbduck` console script.
+- Added optional extras for MongoDB, async backends, vector support, graph support, and SQL Server support.
 
-- Added/expanded pytest coverage for:
-  - adapter routing
-  - SQL and Mongo transactions
-  - connection manager caching
-  - query validation/injection protection
-  - exception handler behavior
-  - BCrypt hashing and secret verification
-  - audit logs and rate limiting
-  - model-level sensitive field behavior
-  - model-level date/time round-trip behavior
-  - legacy SQL adapter parameterization
-  - opt-in real backend integration scaffolding

@@ -1,6 +1,7 @@
 from importlib.metadata import PackageNotFoundError, version
 
 from .UDOM import UDOM
+from .udom.async_udom import AsyncUDOM
 from .models import (
     Boolean,
     BooleanField,
@@ -31,10 +32,11 @@ from .models import (
 try:
     __version__ = version("DBDuck")
 except PackageNotFoundError:
-    __version__ = "0.1.0"
+    __version__ = "0.2.0"
 
 __all__ = [
     "UDOM",
+    "AsyncUDOM",
     "UModel",
     "Column",
     "String",

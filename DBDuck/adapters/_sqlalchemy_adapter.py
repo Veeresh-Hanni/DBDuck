@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import builtins
 import re
-import warnings
 from typing import Any, Mapping, Sequence
 
 from sqlalchemy import MetaData, Table, and_, bindparam, delete as sa_delete, func, insert, inspect as sa_inspect, select, text, update as sa_update
@@ -40,7 +39,6 @@ class SQLAlchemyAdapter(BaseAdapter):
     def __init__(self, url: str, **options: Any) -> None:
         self.url = url
         self.options = options
-        self._allow_unsafe_where_strings = bool(options.get("allow_unsafe_where_strings", False))
         self._logger = get_logger(options.get("log_level"))
         self._conn_manager = ConnectionManager()
         self.engine = self._conn_manager.get_engine(
@@ -478,12 +476,6 @@ class SQLAlchemyAdapter(BaseAdapter):
         text_where = where.strip()
         if not text_where:
             return "", {}
-        if self._allow_unsafe_where_strings:
-            warnings.warn(
-                "allow_unsafe_where_strings is deprecated and no longer bypasses parameterization",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         if self._DANGEROUS_SQL.search(text_where):
             raise QueryError("Potential SQL injection detected in where clause")
         tokens = re.split(r"\s+(AND|OR)\s+", text_where, flags=re.IGNORECASE)
@@ -826,7 +818,7 @@ class SQLAlchemyAdapter(BaseAdapter):
             normalized = {
                 key: self._normalize_value_for_column(entity, key, value) for key, value in parsed_data.items()
             }
-            return insert(table).values(**normalized)
+            return insert(table).values(**normalized), {}
         raise QueryError("Unsupported UQL command")
 
     def begin(self):
@@ -848,11 +840,14 @@ class SQLAlchemyAdapter(BaseAdapter):
         self._conn_manager.dispose_engine(self.url)
 
     def create_view(self, name: str, select_query: str, *, replace: bool = False) -> Any:
+        """Create a SQL view. Admin/internal use only."""
         view_name = self._validate_identifier(name)
         self._require_admin_mode("create_view")
         select_sql = self._validate_admin_sql_fragment(select_query, field_name="select_query")
         if not re.match(r"^(SELECT|WITH)\b", select_sql, flags=re.IGNORECASE):
             raise QueryError("view definition must start with SELECT or WITH")
+        if self._DANGEROUS_SQL.search(select_sql):
+            raise QueryError("select_query contains prohibited SQL content")
         if replace:
             self.drop_view(view_name, if_exists=True)
         sql = f"CREATE VIEW {self._quote(view_name)} AS {select_sql}"  # nosec B608
@@ -864,11 +859,14 @@ class SQLAlchemyAdapter(BaseAdapter):
         return self.run_native(sql)
 
     def create_procedure(self, name: str, definition: str, *, replace: bool = False) -> Any:
+        """Create a stored procedure. Admin/internal use only."""
         proc_name = self._validate_identifier(name)
         if self.DIALECT == "sqlite":
             raise QueryError("stored procedures are not supported for sqlite")
         self._require_admin_mode("create_procedure")
         definition_sql = self._validate_admin_sql_fragment(definition, field_name="definition")
+        if self._DANGEROUS_SQL.search(definition_sql):
+            raise QueryError("definition contains prohibited SQL content")
         if replace:
             self.drop_procedure(proc_name, if_exists=True)
         keyword = "CREATE OR REPLACE PROCEDURE" if self.DIALECT == "postgres" else "CREATE PROCEDURE"
@@ -896,11 +894,14 @@ class SQLAlchemyAdapter(BaseAdapter):
         return self.run_native(sql, params=bound)
 
     def create_function(self, name: str, definition: str, *, replace: bool = False) -> Any:
+        """Create a SQL function. Admin/internal use only."""
         func_name = self._validate_identifier(name)
         if self.DIALECT == "sqlite":
             raise QueryError("function creation is not supported for sqlite")
         self._require_admin_mode("create_function")
         definition_sql = self._validate_admin_sql_fragment(definition, field_name="definition")
+        if self._DANGEROUS_SQL.search(definition_sql):
+            raise QueryError("definition contains prohibited SQL content")
         if replace:
             self.drop_function(func_name, if_exists=True)
         keyword = "CREATE OR REPLACE FUNCTION" if self.DIALECT == "postgres" else "CREATE FUNCTION"
@@ -934,6 +935,7 @@ class SQLAlchemyAdapter(BaseAdapter):
         preserve: bool = True,
         enable: bool = True,
     ) -> Any:
+        """Create a scheduled SQL event. Admin/internal use only."""
         event_name = self._validate_identifier(name)
         if self.DIALECT != "mysql":
             raise QueryError("database events are currently supported only for mysql")
@@ -944,6 +946,8 @@ class SQLAlchemyAdapter(BaseAdapter):
             raise QueryError("schedule must match EVERY <n> <SECOND|MINUTE|HOUR|DAY|WEEK|MONTH>")
         self._require_admin_mode("create_event")
         body_sql = self._validate_admin_sql_fragment(body, field_name="body")
+        if self._DANGEROUS_SQL.search(body_sql):
+            raise QueryError("body contains prohibited SQL content")
         if replace:
             self.drop_event(event_name, if_exists=True)
         preserve_sql = "ON COMPLETION PRESERVE" if preserve else "ON COMPLETION NOT PRESERVE"

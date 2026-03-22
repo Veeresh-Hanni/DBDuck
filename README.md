@@ -1,294 +1,182 @@
-﻿# DBDuck
+# DBDuck — One API for every database
+
+[![PyPI version](https://img.shields.io/pypi/v/dbduck.svg)](https://pypi.org/project/dbduck/)
+[![Python versions](https://img.shields.io/pypi/pyversions/dbduck.svg)](https://pypi.org/project/dbduck/)
+[![CI](https://img.shields.io/github/actions/workflow/status/Veeresh-Hanni/DBDuck/ci.yml?branch=main)](https://github.com/Veeresh-Hanni/DBDuck/actions)
+[![License](https://img.shields.io/github/license/Veeresh-Hanni/DBDuck)](LICENSE)
 
 <p align="center">
-  <img src="docs/assets/dbduck-logo.png" alt="DBDuck Logo" width="320" bg="black" />
+  <img src="docs/assets/dbduck-logo.png" alt="DBDuck Logo" bg="black" />
 </p>
 
-**Universal Data Object Model (UDOM) for SQL and NoSQL.**
+DBDuck is a Universal Data Object Model (UDOM): one Python API for SQL, MongoDB, Neo4j, Qdrant, and async data workflows.
 
-DBDuck gives one API for data operations across engines.
+## The problem
+You use Postgres and MongoDB and Qdrant and Neo4j.
+That means four clients, four query styles, four error formats, and four security surfaces.
+Every feature team ends up rebuilding the same validation, retries, logging, and model plumbing.
+The more backends you add, the more your application code turns into adapter glue.
 
-## Current Stage
+## The solution
+```python
+# BEFORE: four clients, four mental models
+import asyncpg
+from pymongo import MongoClient
+from neo4j import GraphDatabase
+from qdrant_client import QdrantClient
 
-- Stable focus: `SQL` + `NoSQL (MongoDB)`
-- Next phase: Graph, AI, Vector
-
-## Supported Backends
-
-Current production-capable backends in DBDuck:
-
-- `SQLite`
-- `MySQL`
-- `PostgreSQL`
-- `SQL Server`
-- `MongoDB`
-
-These are the current officially supported real backends for DBDuck core UDOM workflows.
-
-Backend names that may appear in config but are not yet production-complete should be treated as planned or experimental.
-
-## Install
-
-```bash
-pip install .
-# for tests and tooling
-pip install .[dev]
-# for MongoDB support
-pip install .[mongo]
-# for SQL Server support
-pip install .[mssql]
-# install all optional backend extras
-pip install .[all]
+# 40+ lines of setup, auth, query translation, and result normalization
 ```
 
-## Backend Hardening Config
+```python
+# AFTER: one API, one model, one error surface
+from DBDuck import UDOM
 
-Runtime behavior is environment-configurable with secure defaults.
+sql = UDOM(db_type="sql", db_instance="postgres", url="postgresql+psycopg2://...")
+mongo = UDOM(db_type="nosql", db_instance="mongodb", url="mongodb://localhost:27017/app")
+graph = UDOM(db_type="graph", db_instance="neo4j", url="bolt://localhost:7687")
+vector = UDOM(db_type="vector", db_instance="qdrant", url="http://localhost:6333")
 
-- See `.env.example` for all settings.
-- Sensitive deployment values should come from your secret manager.
+orders = sql.find("orders", where={"paid": True})
+profiles = mongo.find("profiles", where={"active": True})
+related = graph.find_related("User", id="u1", rel_type="PURCHASED")
+nearest = vector.search_similar("products", vector=[0.1, 0.2, 0.3], top_k=5)
+```
 
-Key options:
+## Install
+```bash
+pip install dbduck
+pip install dbduck[mongo]    # MongoDB support
+pip install dbduck[async]    # AsyncUDOM
+pip install dbduck[vector]   # Vector DB (Qdrant)
+pip install dbduck[graph]    # Neo4j
+pip install dbduck[all]      # Everything
+```
 
-- `DBDUCK_SQL_POOL_SIZE`, `DBDUCK_SQL_MAX_OVERFLOW`
-- `DBDUCK_MONGO_MAX_POOL_SIZE`, `DBDUCK_MONGO_CONNECT_TIMEOUT_MS`
-- `DBDUCK_MONGO_RETRY_ATTEMPTS`, `DBDUCK_MONGO_RETRY_BACKOFF_MS`
-- `DBDUCK_HASH_SENSITIVE_FIELDS=true`
-- `DBDUCK_BCRYPT_ROUNDS=12`
-- `DBDUCK_SECURITY_AUDIT_ENABLED=true`
-- `DBDUCK_SECURITY_AUDIT_ENTITY=security_logs`
-- `DBDUCK_RATE_LIMIT_ENABLED=false`
-- `DBDUCK_RATE_LIMIT_MAX_REQUESTS=60`
-- `DBDUCK_RATE_LIMIT_WINDOW_SECONDS=60`
+## Quick start
 
-## Quick Start
-
+### SQLite
 ```python
 from DBDuck import UDOM
 
-# SQL (MySQL / PostgreSQL / SQLite)
-db = UDOM(db_type="sql", db_instance="mysql", url="mysql+pymysql://user:pass@localhost:3306/udom")
-db.create("Orders", {"order_id": 101, "customer": "A", "paid": True})
-print(db.find("Orders", where={"paid": True}, limit=10))
-
-# Explicit transactions
-db.begin()
-db.create("Orders", {"order_id": 102, "customer": "B", "paid": False})
-db.commit()
-
-# Transaction context manager
-with db.transaction():
-    db.create("Orders", {"order_id": 103, "customer": "C", "paid": True})
-
-# NoSQL (MongoDB)
-nosql_db = UDOM(db_type="nosql", db_instance="mongodb", url="mongodb://localhost:27017/udom")
-print(nosql_db.execute("ping"))
-print(nosql_db.create("events", {"type": "login", "ok": True}))
-print(nosql_db.find("events", where={"ok": True}))
-print(
-    db.aggregate(
-        "Orders",
-        group_by="paid",
-        metrics={"total_orders": "count(*)"},
-        order_by="paid DESC",
-    )
-)
-
-# BCrypt secret verification
-db.create("users", {"id": 1, "username": "veeresh", "password": "plain-secret"})
-user = db.find("users", where={"id": 1})[0]
-assert db.verify_secret("plain-secret", user["password"]) is True
+db = UDOM(db_type="sql", db_instance="sqlite", url="sqlite:///app.db")
+db.create("users", {"id": 1, "name": "Asha", "active": True})
+users = db.find("users", where={"active": True})
+print(users)
 ```
 
-Model-level sensitive fields:
-
+### MongoDB
 ```python
-from DBDuck.udom.models.umodel import UModel
+from DBDuck import UDOM
 
-class Member(UModel):
-    __sensitive_fields__ = ["pin"]
+db = UDOM(db_type="nosql", db_instance="mongodb", url="mongodb://localhost:27017/app")
+db.create("profiles", {"id": "p1", "name": "Nila", "active": True})
+profiles = db.find("profiles", where={"active": True})
+print(profiles)
+```
+
+### Async Postgres
+```python
+import asyncio
+from DBDuck.udom.async_udom import AsyncUDOM
+
+async def main():
+    db = AsyncUDOM(db_type="sql", db_instance="postgres", url="postgresql+psycopg2://postgres:pass@localhost:5432/app")
+    await db.create("users", {"id": 1, "name": "Ishan", "active": True})
+    print(await db.find("users", where={"active": True}))
+    await db.close()
+
+asyncio.run(main())
+```
+
+### Qdrant
+```python
+from DBDuck import UDOM
+
+db = UDOM(db_type="vector", db_instance="qdrant", url="http://localhost:6333")
+db.create_collection("products", vector_size=3, distance="cosine")
+db.upsert_vector("products", id="p1", vector=[0.1, 0.2, 0.3], metadata={"name": "Widget"})
+print(db.search_similar("products", vector=[0.1, 0.2, 0.3], top_k=3))
+```
+
+### Neo4j
+```python
+from DBDuck import UDOM
+
+db = UDOM(db_type="graph", db_instance="neo4j", url="bolt://localhost:7687", auth=("neo4j", "password"))
+db.create("User", {"id": "u1", "name": "Mira"})
+db.create("Company", {"id": "c1", "name": "DBDuck"})
+db.create_relationship("User", "u1", "WORKS_AT", "Company", "c1", {"role": "Engineer"})
+print(db.find_related("User", id="u1", rel_type="WORKS_AT", target_label="Company"))
+```
+
+## Supported backends
+
+| Backend | Type | Status | Install extra |
+| --- | --- | --- | --- |
+| SQLite | SQL | Production-capable | base |
+| MySQL | SQL | Production-capable | base driver required |
+| PostgreSQL | SQL | Production-capable | base driver required |
+| SQL Server | SQL | Production-capable | `mssql` |
+| MongoDB | NoSQL | Production-capable | `mongo` |
+| Neo4j | Graph | Production-capable | `graph` |
+| Qdrant | Vector | Production-capable | `vector` |
+| Pinecone | Vector | Stub/TODO | planned |
+| Weaviate | Vector | Stub/TODO | planned |
+| Chroma | Vector | Stub/TODO | planned |
+| AI backends | AI | Experimental pass-through | planned |
+
+## Core API reference
+- `create(entity, data)`: insert one record, document, node, or vector payload.
+- `create_many(entity, rows)`: batch insert records or documents.
+- `find(entity, where=None, order_by=None, limit=None)`: fetch matching records.
+- `find_page(entity, page=1, page_size=20, where=None, order_by=None)`: offset pagination with safety caps.
+- `update(entity, data, where)`: update matching records safely.
+- `delete(entity, where)`: delete matching records safely.
+- `count(entity, where=None)`: count matching records.
+- `aggregate(...)`: backend-aware aggregation for SQL and MongoDB.
+- `begin() / commit() / rollback() / transaction()`: transaction control.
+- `ping() / close()`: lifecycle and health checks.
+- `uexecute(uql)`: execute UQL through backend-specific parameterized translation.
+- `create_relationship(...) / find_related(...) / shortest_path(...)`: graph-specific helpers.
+- `create_collection(...) / upsert_vector(...) / search_similar(...)`: vector-specific helpers.
+
+Full docs live in the codebase docstrings and examples.
+
+## UModel
+```python
+from DBDuck import UDOM, UModel
+
+class User(UModel):
+    __entity__ = "users"
+    __sensitive_fields__ = ["password"]
     id: int
-    username: str
-    pin: str
+    email: str
+    password: str
+
+User.bind(UDOM(db_type="sql", db_instance="sqlite", url="sqlite:///app.db"))
+user = User(id=1, email="user@example.com", password="plain-text")
+user.save()
+print(User.find_one(where={"id": 1}).to_dict())
+print(User.find_one(where={"id": 1}).verify_secret("password", "plain-text"))
 ```
 
-Model-level date/time coercion:
+## Security
+- Parameterized SQL and parameterized Cypher generation.
+- UQL string hardening for `FIND`, `CREATE`, and `DELETE`.
+- Mongo operator-injection blocking.
+- Identifier validation across entities, fields, labels, and relationship types.
+- BCrypt hashing for sensitive fields.
+- `verify_secret()` helper for BCrypt validation.
+- Structured logging without raw SQL or user secrets in normal logs.
+- Custom exception hierarchy with masked execution errors.
+- Security audit logging for blocked operations.
+- Per-caller rate limiting support.
 
-```python
-from datetime import date, datetime, time
-from DBDuck.models import UModel
+## Roadmap
+DBDuck 0.2.0 delivers the hardened SQL core, Mongo support, Neo4j graph support, Qdrant vector support, AsyncUDOM, and the CLI.
+Next up: deeper vector backends, richer schema migration workflows, Redis and DynamoDB adapters, and first-class observability hooks.
 
-class CalendarEvent(UModel):
-    title: str
-    starts_at: datetime
-    event_date: date
-    reminder_at: time | None
-```
-
-`UModel` now accepts typed Python temporal values or ISO strings and round-trips them as `datetime`, `date`, and `time`.
-
-## Core API
-
-- `create(entity, data)`
-- `create_many(entity, rows)`
-- `find(entity, where=None, order_by=None, limit=None)`
-- `find_page(entity, page=1, page_size=20, where=None, order_by=None)`
-- `delete(entity, where)`
-- `update(entity, data, where)`
-- `count(entity, where=None)`
-- `aggregate(entity, group_by=None, metrics=None, where=None, having=None, order_by=None, limit=None, pipeline=None)`
-- `execute(native_query)`
-- `uquery(uql)`
-- `uexecute(uql)`
-- `begin()`
-- `commit()`
-- `rollback()`
-- `transaction()`
-- `ping()`
-- `close()`
-- `ensure_indexes(entity, indexes)` (NoSQL/Mongo)
-
-## Production Architecture
-
-```text
-DBDuck/
-  core/
-    adapter_router.py
-    base_adapter.py
-    connection_manager.py
-    exceptions.py
-    mongo_connection_manager.py
-    schema.py
-    transaction.py
-  adapters/
-    mysql_adapter.py
-    mssql_adapter.py
-    postgres_adapter.py
-    sqlite_adapter.py
-  udom/
-    udom.py
-  utils/
-    logger.py
-```
-
-Design highlights:
-- Adapter pattern keeps backend-specific logic out of `UDOM`.
-- SQL adapters use SQLAlchemy with parameterized execution and connection pooling.
-- MongoDB NoSQL adapter supports pooled client management, safe filter parsing, and transactions.
-- `ConnectionManager` provides lazy, thread-safe engine/session reuse.
-- Structured logging captures query, error, and connection events.
-
-## Recent Changes
-
-- Enforced full `BaseAdapter` abstract contract for all adapters.
-- Added adapter auto-router for SQL dialect selection from `db_instance` / URL.
-- Added thread-safe SQL and Mongo connection managers with lifecycle cleanup.
-- Added transaction safety for SQL + Mongo (`begin`, `commit`, `rollback`, `transaction`).
-- Added centralized schema validation for `create/find/delete`.
-- Added stronger injection defenses:
-  - SQL string `where` parsing + parameter binding.
-  - Mongo filter parsing with unsafe token rejection.
-- Added automatic BCrypt hashing for sensitive fields like `password`, `secret`, and token fields.
-- Added security audit trail persistence to `security_logs` for blocked injection attempts and rate-limit events.
-- Added in-memory rate limiting controls for UDOM operations.
-- Added custom exception mapping across SQL + Mongo:
-  - `DatabaseError`, `ConnectionError`, `QueryError`, `TransactionError`.
-- Added structured logging for connection/query/transaction events and errors.
-- Added masked execution errors for SQL and Mongo so raw driver/database details are not exposed to callers.
-- Added batch operations (`create_many`) for SQL + Mongo.
-- Added health/lifecycle methods: `ping()` and `close()`.
-- Added `verify_secret(...)` for BCrypt password/secret verification.
-- Added `UModel.__sensitive_fields__` for model-level sensitive field hashing.
-- Added `UModel` support for `datetime`, `date`, and `time` annotations with ISO serialization and typed round-tripping.
-- Added real backend integration test scaffolding for `MySQL`, `PostgreSQL`, `SQL Server`, and `MongoDB`.
-- Added native backend pagination support for SQL and Mongo-backed `find_page()`.
-- Refactored legacy SQL adapter paths to parameterize `CREATE`/`FIND`/`DELETE` values instead of embedding them into SQL strings.
-- Added test coverage for routing, transactions, validation, error handling, hashing, audit logs, rate limiting, and integration scaffolding.
-
-## CI/CD (Tests)
-
-GitHub Actions workflow is included at:
-
-- `.github/workflows/ci.yml`
-
-It runs on push and pull requests:
-
-- Python `3.10`, `3.11`, `3.12`
-- `pip install .[dev]`
-- `pytest -q`
-- `pip-audit --desc`
-- `bandit -q -r DBDuck -c .bandit`
-
-Real backend integration tests are available under `tests/integration` for:
-
-- `mongodb`
-- `mysql`
-- `postgresql`
-- `mssql`
-
-They are opt-in via environment flags so the default suite stays local and deterministic.
-The integration suite now covers CRUD, transaction commit/rollback, native pagination, and connection-failure mapping for the current production backends.
-
-## SQL Migration Baseline
-
-Alembic baseline scaffold is included:
-
-- `migrations/sql/alembic.ini`
-- `migrations/sql/env.py`
-- `migrations/sql/versions/`
-
-Usage:
-
-```bash
-alembic -c migrations/sql/alembic.ini revision -m "init"
-alembic -c migrations/sql/alembic.ini upgrade head
-```
-
-## Mongo Indexes
-
-```python
-db.ensure_indexes(
-    "events",
-    [
-        {
-            "fields": [{"name": "type", "order": "asc"}, {"name": "ts", "order": "desc"}],
-            "options": {"name": "idx_type_ts"},
-        }
-    ],
-)
-```
-
-Model-driven indexes:
-
-```python
-from DBDuck.udom.models.umodel import UModel
-
-class Event(UModel):
-    __collection__ = "events"
-    __indexes__ = [
-        {"fields": [{"name": "type", "order": "asc"}], "options": {"name": "idx_type"}},
-    ]
-
-Event.bind(db)
-Event.ensure_indexes()
-```
-
-## Production Readiness Snapshot
-
-- Current readiness estimate for current real backends: **88%**
-- Coverage now includes robust SQL + Mongo core operations, security controls, and real backend integration scaffolding for `MySQL`, `PostgreSQL`, `SQL Server`, and `MongoDB`.
-- Remaining work for higher confidence:
-  - Migrations and schema evolution strategy.
-  - Full real-backend integration execution in CI infrastructure.
-  - Observability dashboards/alerts and SLOs.
-  - Performance/load testing with real infra.
-  - Release/versioning policy and backend compatibility matrix.
-
-## Initialize Guide
-
-See `docs/INITIALIZE.md` for full initialization steps.
-
-## Logo
-<p align="center">
-  <img src="docs/assets/dbduck-logo.png" alt="DBDuck Logo" width="320" bg="black" />
-</p>
+## Contributing
+Issues, discussions, and pull requests are welcome.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and contribution guidelines.
