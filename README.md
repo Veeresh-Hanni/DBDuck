@@ -1,4 +1,4 @@
-# DBDuck — One API for every database
+﻿# DBDuck — One API for every database
 
 [![PyPI version](https://img.shields.io/pypi/v/dbduck.svg)](https://pypi.org/project/dbduck/)
 [![Python versions](https://img.shields.io/pypi/pyversions/dbduck.svg)](https://pypi.org/project/dbduck/)
@@ -32,7 +32,7 @@ from qdrant_client import QdrantClient
 # AFTER: one API, one model, one error surface
 from DBDuck import UDOM
 
-sql = UDOM(db_type="sql", db_instance="postgres", url="postgresql+psycopg2://...")
+sql = UDOM(url="postgresql+psycopg2://...")
 mongo = UDOM(db_type="nosql", db_instance="mongodb", url="mongodb://localhost:27017/app")
 graph = UDOM(db_type="graph", db_instance="neo4j", url="bolt://localhost:7687")
 vector = UDOM(db_type="vector", db_instance="qdrant", url="http://localhost:6333")
@@ -59,7 +59,7 @@ pip install dbduck[all]      # Everything
 ```python
 from DBDuck import UDOM
 
-db = UDOM(db_type="sql", db_instance="sqlite", url="sqlite:///app.db")
+db = UDOM(url="sqlite:///app.db")
 db.create("users", {"id": 1, "name": "Asha", "active": True})
 users = db.find("users", where={"active": True})
 print(users)
@@ -81,7 +81,7 @@ import asyncio
 from DBDuck.udom.async_udom import AsyncUDOM
 
 async def main():
-    db = AsyncUDOM(db_type="sql", db_instance="postgres", url="postgresql+psycopg2://postgres:pass@localhost:5432/app")
+    db = AsyncUDOM(url="postgresql+psycopg2://postgres:pass@localhost:5432/app")
     await db.create("users", {"id": 1, "name": "Ishan", "active": True})
     print(await db.find("users", where={"active": True}))
     await db.close()
@@ -109,6 +109,18 @@ db.create("Company", {"id": "c1", "name": "DBDuck"})
 db.create_relationship("User", "u1", "WORKS_AT", "Company", "c1", {"role": "Engineer"})
 print(db.find_related("User", id="u1", rel_type="WORKS_AT", target_label="Company"))
 ```
+
+## Developer-friendly setup
+- For SQL backends, DBDuck can infer the backend directly from the URL:
+  - `UDOM(url="sqlite:///app.db")`
+  - `UDOM(url="mysql+pymysql://root:pass@localhost:3306/app")`
+  - `UDOM(url="postgresql+psycopg2://postgres:pass@localhost:5432/app")`
+  - `UDOM(url="mssql+pyodbc:///?odbc_connect=...")`
+- Explicit configuration still works if you prefer it:
+  - `UDOM(db_type="sql", db_instance="postgres", url="...")`
+- Common SQL aliases are accepted:
+  - `postgres`, `postgresql`, `psql`, `pg`
+  - `mssql`, `sqlserver`
 
 ## Supported backends
 
@@ -143,6 +155,16 @@ print(db.find_related("User", id="u1", rel_type="WORKS_AT", target_label="Compan
 
 Full docs live in the codebase docstrings and examples.
 
+## CLI
+```bash
+dbduck ping --url "postgresql+psycopg2://postgres:pass@localhost:5432/app"
+dbduck shell --url "sqlite:///app.db"
+dbduck inspect --url "sqlite:///app.db" --entity users
+dbduck version
+```
+
+For SQL backends, `dbduck` can infer the backend from the URL, so `--type` and `--instance` are optional.
+
 ## UModel
 ```python
 from DBDuck import UDOM, UModel
@@ -154,12 +176,20 @@ class User(UModel):
     email: str
     password: str
 
-User.bind(UDOM(db_type="sql", db_instance="sqlite", url="sqlite:///app.db"))
+User.bind(UDOM(url="sqlite:///app.db"))
 user = User(id=1, email="user@example.com", password="plain-text")
 user.save()
 print(User.find_one(where={"id": 1}).to_dict())
 print(User.find_one(where={"id": 1}).verify_secret("password", "plain-text"))
 ```
+
+## Errors
+- DBDuck maps backend failures to DBDuck exceptions:
+  - `ConnectionError`
+  - `QueryError`
+  - `TransactionError`
+- CLI commands return masked, developer-friendly messages instead of raw SQLAlchemy tracebacks.
+- Use `--debug-errors` in `dbduck shell` if you want the full underlying traceback while debugging locally.
 
 ## Security
 - Parameterized SQL and parameterized Cypher generation.
@@ -180,3 +210,4 @@ Next up: deeper vector backends, richer schema migration workflows, Redis and Dy
 ## Contributing
 Issues, discussions, and pull requests are welcome.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and contribution guidelines.
+

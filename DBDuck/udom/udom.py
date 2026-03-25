@@ -98,7 +98,16 @@ class UDOM:
         raise ConnectionError("Unsupported db_type/db_instance for UDOM")
 
     def _normalize_instance_alias(self, db_instance: str) -> str:
-        aliases = {"postgresql": "postgres", "mongo": "mongodb", "sqlserver": "mssql"}
+        aliases = {
+            "postgresql": "postgres",
+            "postgres": "postgres",
+            "psql": "postgres",
+            "pg": "postgres",
+            "mongo": "mongodb",
+            "mongod": "mongodb",
+            "sqlserver": "mssql",
+            "ms-sql": "mssql",
+        }
         return aliases.get(db_instance, db_instance)
 
     def _default_instance(self, db_type: str) -> str:

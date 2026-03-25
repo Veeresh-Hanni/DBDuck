@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 ## v0.2.0 - 2026-03-20
 
@@ -10,6 +10,10 @@
 - Async and vector test suites.
 
 ### Changed
+- Made SQL setup more developer-friendly by allowing URL-only backend inference in the Python API and CLI.
+- Added support for common legacy/current SQL aliases such as `psql`, `pg`, `postgresql`, and `sqlserver`.
+- Improved CLI exception handling so `ping`, `inspect`, and shell flows return DBDuck-style masked errors instead of raw SQLAlchemy tracebacks.
+- Added friendlier CLI hints for common connection failures like missing databases, auth failures, and unreachable hosts.
 - Hardened SQLAlchemy UQL translation so `CREATE`, `FIND`, and `DELETE` use parameterized execution paths.
 - Removed the unsafe `allow_unsafe_where_strings` bypass path.
 - Hardened MSSQL existence checks with parameterized `OBJECT_ID` lookups.

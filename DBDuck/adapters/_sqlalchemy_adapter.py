@@ -378,8 +378,18 @@ class SQLAlchemyAdapter(BaseAdapter):
                 "unknown mysql server host",
                 "could not translate host name",
                 "nodename nor servname provided",
+                "unknown database",
+                "authentication failed",
+                "password authentication failed",
+                "login failed",
             )
             if any(token in lowered for token in markers):
+                return True
+            if (
+                "connection to server at" in lowered
+                and "database " in lowered
+                and "does not exist" in lowered
+            ):
                 return True
         orig = getattr(exc, "orig", None)
         if isinstance(orig, (OSError, TimeoutError)):

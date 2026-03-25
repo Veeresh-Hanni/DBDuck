@@ -24,24 +24,60 @@ class VectorAdapter(BaseAdapter):
 
     def _get_qdrant(self):
         if self.db_instance != "qdrant":
-            raise QueryError(f"{self.db_instance} support is currently a documented stub")
+            raise QueryError(
+                f"{self.db_instance} support is currently a documented stub"
+            )
+
         if self._client is not None:
             return self._client
+
         try:
             from qdrant_client import QdrantClient
             from qdrant_client.http import models as rest
+            from urllib.parse import urlparse
         except Exception as exc:
-            raise ConnectionError("qdrant-client is required for Qdrant support") from exc
+            raise ConnectionError(
+                "qdrant-client is required for Qdrant support"
+            ) from exc
+
         self._models = rest
+
         self._distance_map = {
             "cosine": rest.Distance.COSINE,
             "euclid": rest.Distance.EUCLID,
             "dot": rest.Distance.DOT,
         }
+
+        url = self.url or "http://localhost:6333"
+
         try:
-            self._client = QdrantClient(url=self.url or "http://localhost:6333")
+            # ✅ Try new API (1.x)
+            self._client = QdrantClient(url=url)
+
+        except TypeError:
+
+            # ✅ fallback for old API (0.x)
+            try:
+                parsed = urlparse(url)
+
+                host = parsed.hostname or "localhost"
+                port = parsed.port or 6333
+
+                self._client = QdrantClient(
+                    host=host,
+                    port=port,
+                )
+
+            except Exception as exc:
+                raise ConnectionError(
+                    "Database connection failed"
+                ) from exc
+
         except Exception as exc:
-            raise ConnectionError("Database connection failed") from exc
+            raise ConnectionError(
+                "Database connection failed"
+            ) from exc
+
         return self._client
 
     def _ensure_models_loaded(self) -> None:

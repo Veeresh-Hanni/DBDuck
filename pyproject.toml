@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dbduck"
-version = "0.2.0"
+version = "0.2.1"
 description = "Universal Data Object Model - one API for every database"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,10 +31,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Veeresh-Hanni/DBDuck"
+Homepage = "https://dbduck.org.in"
 Repository = "https://github.com/Veeresh-Hanni/DBDuck"
 Issues = "https://github.com/Veeresh-Hanni/DBDuck/issues"
-Documentation = "https://github.com/Veeresh-Hanni/DBDuck#readme"
+Documentation = "https://dbduck.org.in"
 
 [project.scripts]
 dbduck = "DBDuck.cli.main:app"

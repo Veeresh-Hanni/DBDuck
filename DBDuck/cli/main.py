@@ -13,17 +13,19 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.exc import SQLAlchemyError
 
 from DBDuck import UDOM, __version__
-from DBDuck.core.exceptions import QueryError
+from DBDuck.core.adapter_router import AdapterRouter
+from DBDuck.core.exceptions import ConnectionError, QueryError, TransactionError
 
 _HISTORY_FILE = Path.home() / ".dbduck_history"
 _SUPPORTED_BACKENDS = {
-    "sql": ["sqlite", "mysql", "postgres", "postgresql", "mssql", "sqlserver"],
+    "sql": ["sqlite", "mysql", "postgresql", "mssql", "sqlserver"],
     "nosql": ["mongodb", "mongo"],
     "graph": ["neo4j"],
-    "vector": ["qdrant", "pinecone", "weaviate", "chroma"],
-    "ai": ["openai", "azure-openai", "bedrock", "vertexai", "ollama"],
+    "vector": ["qdrant"],
+    # "ai": ["openai", "azure-openai", "bedrock", "vertexai", "ollama"],
 }
 
 
@@ -45,12 +47,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     ping = subparsers.add_parser("ping", help="Connect and ping the backend")
     ping.add_argument("--url", required=True)
-    ping.add_argument("--type", required=True, dest="db_type")
+    ping.add_argument("--type", dest="db_type")
     ping.add_argument("--instance", dest="db_instance")
 
     shell = subparsers.add_parser("shell", help="Interactive UQL shell")
     shell.add_argument("--url", required=True)
-    shell.add_argument("--type", required=True, dest="db_type")
+    shell.add_argument("--type", dest="db_type")
     shell.add_argument("--instance", dest="db_instance")
     shell.add_argument(
         "--debug-errors",
@@ -60,7 +62,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     inspect_cmd = subparsers.add_parser("inspect", help="Inspect an entity schema or structure")
     inspect_cmd.add_argument("--url", required=True)
-    inspect_cmd.add_argument("--type", required=True, dest="db_type")
+    inspect_cmd.add_argument("--type", dest="db_type")
     inspect_cmd.add_argument("--entity", required=True)
     inspect_cmd.add_argument("--instance", dest="db_instance")
 
@@ -74,7 +76,72 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _make_db(args: argparse.Namespace) -> UDOM:
-    return UDOM(db_type=args.db_type, db_instance=args.db_instance, url=args.url)
+    db_type, db_instance = _resolve_backend_inputs(args.url, args.db_type, args.db_instance)
+    args.db_type = db_type
+    args.db_instance = db_instance
+    return UDOM(db_type=db_type, db_instance=db_instance, url=args.url)
+
+
+def _infer_backend_from_url(url: str) -> tuple[str, str] | None:
+    inferred_sql = AdapterRouter.infer_sql_instance_from_url(url)
+    if inferred_sql:
+        return "sql", inferred_sql
+    lowered = (url or "").lower()
+    if lowered.startswith(("mongodb://", "mongodb+srv://")):
+        return "nosql", "mongodb"
+    if lowered.startswith(("bolt://", "neo4j://")):
+        return "graph", "neo4j"
+    if ":6333" in lowered or "qdrant" in lowered:
+        return "vector", "qdrant"
+    return None
+
+
+def _normalize_backend_alias(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    aliases = {
+        "postgresql": "postgres",
+        "postgres": "postgres",
+        "psql": "postgres",
+        "pg": "postgres",
+        "mongo": "mongodb",
+        "mongodb": "mongodb",
+        "sqlserver": "mssql",
+        "ms-sql": "mssql",
+        "mssql": "mssql",
+        "sqlite3": "sqlite",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _resolve_backend_inputs(url: str, db_type: str | None, db_instance: str | None) -> tuple[str, str | None]:
+    normalized_type = _normalize_backend_alias(db_type)
+    normalized_instance = _normalize_backend_alias(db_instance)
+    inferred = _infer_backend_from_url(url)
+
+    if normalized_type in {"postgres", "sqlite", "mysql", "mssql"} and normalized_instance is None:
+        normalized_instance = normalized_type
+        normalized_type = "sql"
+    if normalized_type in {"mongodb"} and normalized_instance is None:
+        normalized_instance = normalized_type
+        normalized_type = "nosql"
+    if normalized_type in {"neo4j"} and normalized_instance is None:
+        normalized_instance = normalized_type
+        normalized_type = "graph"
+    if normalized_type in {"qdrant"} and normalized_instance is None:
+        normalized_instance = normalized_type
+        normalized_type = "vector"
+
+    if normalized_type is None:
+        if inferred:
+            return inferred
+        return "sql", normalized_instance
+
+    if normalized_instance is None and inferred and inferred[0] == normalized_type:
+        normalized_instance = inferred[1]
+
+    return normalized_type, normalized_instance
 
 
 def _format_result(value: Any) -> str:
@@ -108,24 +175,49 @@ def _normalize_shell_line(line: str) -> str:
     return line.strip().rstrip(";").strip()
 
 
+def _map_sqlalchemy_error(db: UDOM, exc: Exception) -> ConnectionError | QueryError:
+    if hasattr(db.adapter, "_is_connection_error") and isinstance(exc, SQLAlchemyError):
+        if db.adapter._is_connection_error(exc):
+            return ConnectionError("Database connection failed")
+    if hasattr(db.adapter, "_is_connection_like_exception") and db.adapter._is_connection_like_exception(exc):
+        return ConnectionError("Database connection failed")
+    return QueryError("Database execution failed")
+
+
+def _friendly_error_detail(exc: BaseException) -> str | None:
+    text = _root_exception_message(exc).lower()
+    if "does not exist" in text and "database" in text:
+        return "The target database does not exist yet."
+    if "authentication failed" in text or "password authentication failed" in text or "login failed" in text:
+        return "Authentication failed. Check the username/password in your URL."
+    if "connection refused" in text or "could not connect" in text or "is the server running" in text:
+        return "The database server is not reachable. Check host, port, and whether the server is running."
+    if "could not translate host name" in text or "name or service not known" in text:
+        return "The hostname in the URL could not be resolved."
+    return None
+
+
 def _inspect_entity(db: UDOM, db_type: str, entity: str) -> Any:
     if db_type == "sql":
-        inspector = sa_inspect(db.adapter.engine)
-        columns = inspector.get_columns(entity)
-        pk = inspector.get_pk_constraint(entity) or {}
-        pk_columns = {str(name) for name in pk.get("constrained_columns") or []}
-        unique_columns: set[str] = set()
-        for constraint in inspector.get_unique_constraints(entity) or []:
-            for column in constraint.get("column_names") or []:
-                unique_columns.add(str(column))
-        enriched = []
-        for column in columns:
-            item = dict(column)
-            name = str(item.get("name", ""))
-            item["primary_key"] = name in pk_columns
-            item["unique"] = name in unique_columns
-            enriched.append(item)
-        return enriched
+        try:
+            inspector = sa_inspect(db.adapter.engine)
+            columns = inspector.get_columns(entity)
+            pk = inspector.get_pk_constraint(entity) or {}
+            pk_columns = {str(name) for name in pk.get("constrained_columns") or []}
+            unique_columns: set[str] = set()
+            for constraint in inspector.get_unique_constraints(entity) or []:
+                for column in constraint.get("column_names") or []:
+                    unique_columns.add(str(column))
+            enriched = []
+            for column in columns:
+                item = dict(column)
+                name = str(item.get("name", ""))
+                item["primary_key"] = name in pk_columns
+                item["unique"] = name in unique_columns
+                enriched.append(item)
+            return enriched
+        except Exception as exc:
+            raise _map_sqlalchemy_error(db, exc) from exc
     if db_type == "nosql" and getattr(db.adapter, "db_instance", "") == "mongodb":
         db.adapter._ensure_mongo()
         sample = db.adapter._db[entity].find_one() or {}
@@ -139,8 +231,11 @@ def _inspect_entity(db: UDOM, db_type: str, entity: str) -> Any:
 
 def _list_entities(db: UDOM, db_type: str) -> Any:
     if db_type == "sql":
-        inspector = sa_inspect(db.adapter.engine)
-        return sorted(inspector.get_table_names())
+        try:
+            inspector = sa_inspect(db.adapter.engine)
+            return sorted(inspector.get_table_names())
+        except Exception as exc:
+            raise _map_sqlalchemy_error(db, exc) from exc
     if db_type == "nosql" and getattr(db.adapter, "db_instance", "") == "mongodb":
         db.adapter._ensure_mongo()
         return sorted(db.adapter._db.list_collection_names())
@@ -245,27 +340,45 @@ def _cmd_ping(args: argparse.Namespace) -> int:
 
 def _cmd_shell(args: argparse.Namespace) -> int:
     db = _make_db(args)
+    db.ping()
     _setup_readline()
     print("DBDuck shell. Enter UQL commands, or type 'exit'.")
     try:
         while True:
             try:
                 line = input("dbduck> ").strip()
-            except EOFError:
-                print()
-                break
-            if not line:
-                continue
-            if line.lower() in {"exit", "quit"}:
-                break
-            try:
+                if not line:
+                    continue
+                if line.lower() in {"exit", "quit"}:
+                    break
                 result = _run_shell_command(db, args.db_type, line)
                 print(_format_shell_result(line, result))
-            except Exception as exc:
-                print(f"error: {exc}")
-                if getattr(args, "debug_errors", False):
-                    print(f"debug-error: {_root_exception_message(exc)}", file=sys.stderr)
-                    traceback.print_exception(type(exc), exc, exc.__traceback__)
+            except ConnectionError as exc:
+                print(f"error: Cannot reach database - {exc}")
+                detail = _friendly_error_detail(exc)
+                if detail:
+                    print(f"hint:  {detail}")
+                print("hint:  Check your connection URL with: dbduck ping --url ...")
+            except QueryError as exc:
+                msg = str(exc)
+                print(f"error: {msg}")
+                first_word = line.strip().split()[0].upper() if line.strip() else ""
+                known = {"FIND", "CREATE", "DELETE", "UPDATE", "COUNT", "SHOW", "DESCRIBE", "HELP", "PING", "VERSION", "HISTORY", "CLEAR", "EXPORT"}
+                if first_word not in known and first_word:
+                    closest = min(known, key=lambda k: abs(len(k) - len(first_word)))
+                    print(f"hint:  Unknown command '{first_word}'. Did you mean: {closest}? Type HELP for all commands.")
+                elif "injection" in msg.lower():
+                    print("security: Blocked potential injection attempt. Event logged to security_logs.")
+                elif "not found" in msg.lower() or "execution failed" in msg.lower():
+                    print("hint:  Use SHOW TABLES to see available tables.")
+            except TransactionError as exc:
+                print(f"error: Transaction failed - {exc}")
+            except KeyboardInterrupt:
+                print("\nUse 'exit' to quit the shell.")
+    except Exception as exc:
+        print(f"error: {exc}")
+        if getattr(args, "debug_errors", False):
+            traceback.print_exception(type(exc), exc, exc.__traceback__)
     finally:
         _save_history()
         db.close()
@@ -278,6 +391,15 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
     try:
         print(_format_shell_result(f"DESCRIBE {entity}", _inspect_entity(db, args.db_type, entity)))
         return 0
+    except ConnectionError as exc:
+        print(f"error: Cannot reach database - {exc}")
+        detail = _friendly_error_detail(exc)
+        if detail:
+            print(f"hint:  {detail}")
+        return 1
+    except QueryError as exc:
+        print(f"error: {exc}")
+        return 1
     finally:
         db.close()
 
@@ -310,20 +432,32 @@ def _cmd_version() -> int:
 def app(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    if args.command == "ping":
-        return _cmd_ping(args)
-    if args.command == "shell":
-        return _cmd_shell(args)
-    if args.command == "inspect":
-        return _cmd_inspect(args)
-    if args.command == "migrate":
-        return _cmd_migrate(args)
-    if args.command == "version":
-        return _cmd_version()
-    parser.error("Unknown command")
-    return 1
+    try:
+        if args.command == "ping":
+            return _cmd_ping(args)
+        if args.command == "shell":
+            return _cmd_shell(args)
+        if args.command == "inspect":
+            return _cmd_inspect(args)
+        if args.command == "migrate":
+            return _cmd_migrate(args)
+        if args.command == "version":
+            return _cmd_version()
+        parser.error("Unknown command")
+        return 1
+    except ConnectionError as exc:
+        print(f"error: Cannot reach database - {exc}")
+        detail = _friendly_error_detail(exc)
+        if detail:
+            print(f"hint:  {detail}")
+        return 1
+    except QueryError as exc:
+        print(f"error: {exc}")
+        return 1
+    except TransactionError as exc:
+        print(f"error: Transaction failed - {exc}")
+        return 1
 
 
 if __name__ == "__main__":
     raise SystemExit(app())
-
