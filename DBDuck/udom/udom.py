@@ -29,6 +29,7 @@ from .adapters.graph_adapter import GraphAdapter
 from .adapters.nosql_adapter import NoSQLAdapter
 from .adapters.vector_adapter import VectorAdapter
 from .models.umodel import UModel
+from .query_builder import QueryBuilder
 from .uql.uql_parser import UQLParser
 from .utils.validator import UQLValidator
 
@@ -144,6 +145,33 @@ class UDOM:
         if self.db_type == "vector":
             return VectorAdapter(db_instance=self.db_instance, url=self.url, **self.adapter_options)
         raise ConnectionError(f"Unsupported db_type: {self.db_type}")
+
+    def table(self, entity: str) -> QueryBuilder:
+        """Return a QueryBuilder for fluent query construction.
+
+        This provides a chainable DSL for building queries:
+            db.table("users").where(active=True).order("name").limit(10).find()
+
+        Args:
+            entity: The table/collection/label name to query.
+
+        Returns:
+            A QueryBuilder instance for chaining.
+
+        Example:
+            # Fluent API
+            users = db.table("users").where(active=True).order("name").find()
+            user = db.table("users").where(id=1).first()
+            count = db.table("users").where(role="admin").count()
+
+            # Mutations
+            db.table("users").where(id=1).update({"name": "New Name"})
+            db.table("users").where(id=1).delete()
+
+            # Projections and pagination
+            db.table("users").select("id", "name").page(2, 25).find()
+        """
+        return QueryBuilder(self, entity)
 
     @staticmethod
     def _normalize_entity(entity: str) -> str:

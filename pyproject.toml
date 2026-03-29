@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dbduck"
-version = "0.2.1"
+version = "0.3.0"
 description = "Universal Data Object Model - one API for every database"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,7 +27,8 @@ classifiers = [
 ]
 dependencies = [
   "sqlalchemy>=2.0",
-  "bcrypt>=4.0"
+  "bcrypt>=4.0",
+  "colorama>=0.4.6"
 ]
 
 [project.urls]
@@ -90,4 +91,3 @@ exclude_dirs = [
   "wslvenv"
 ]
 skips = ["B101"]
-

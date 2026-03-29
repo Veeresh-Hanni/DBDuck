@@ -32,6 +32,8 @@ class NoSQLAdapter(BaseAdapter):
         self._local = threading.local()
         self._logger = get_logger(options.get("log_level"))
         self._conn_manager = MongoConnectionManager()
+        self._logger = get_logger(options.get("log_level"))
+        self._conn_manager._logger = self._logger
 
     def run_native(self, query: Any, params: Mapping[str, Any] | None = None):
         """Execute Mongo operation dicts when db_instance is mongodb."""

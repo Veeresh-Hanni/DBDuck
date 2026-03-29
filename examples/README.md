@@ -5,6 +5,11 @@ This folder contains runnable examples from basic to advanced by database engine
 - `examples/app_production.py` (single app-style flow with strict `UModel`, health, transaction, CRUD, pagination)
 - `examples/fastapi_dbduck_app/main.py` (production-style FastAPI service using DBDuck)
 - `examples/fastapi_dbduck_app/README.md` (run and API usage guide)
+- `examples/full_stack_dbduck_app/main.py` (complete FastAPI + browser showcase using UDOM, UModel, joins, UQL)
+- `examples/full_stack_dbduck_app/README.md`
+- `examples/query_builder/example_sql_query_builder.py`
+- `examples/query_builder/example_sql_joins.py`
+- `examples/query_builder/example_umodel_query_builder.py`
 - `examples/dbs/sqlite/basic.py`
 - `examples/dbs/sqlite/advanced.py`
 - `examples/dbs/mysql/basic.py`
@@ -20,6 +25,9 @@ Quick run examples:
 
 ```bash
 python examples/app_production.py
+uvicorn examples.full_stack_dbduck_app.main:app --reload
+python examples/query_builder/example_sql_query_builder.py
+python examples/query_builder/example_sql_joins.py
 uvicorn examples.fastapi_dbduck_app.main:app --host 0.0.0.0 --port 8000 --workers 2
 python -m examples.dbs.sqlite.basic
 python -m examples.dbs.sqlite.advanced

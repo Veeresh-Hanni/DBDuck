@@ -2,6 +2,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from .UDOM import UDOM
 from .udom.async_udom import AsyncUDOM
+from .udom.query_builder import QueryBuilder
 from .models import (
     Boolean,
     BooleanField,
@@ -32,11 +33,12 @@ from .models import (
 try:
     __version__ = version("DBDuck")
 except PackageNotFoundError:
-    __version__ = "0.2.1"
+    __version__ = "0.3.0"
 
 __all__ = [
     "UDOM",
     "AsyncUDOM",
+    "QueryBuilder",
     "UModel",
     "Column",
     "String",

@@ -41,6 +41,8 @@ class SQLAlchemyAdapter(BaseAdapter):
         self.options = options
         self._logger = get_logger(options.get("log_level"))
         self._conn_manager = ConnectionManager()
+        self._logger = get_logger(options.get("log_level"))
+        self._conn_manager._logger = self._logger
         self.engine = self._conn_manager.get_engine(
             url=url,
             pool_size=int(options.get("pool_size", 5)),
@@ -249,13 +251,125 @@ class SQLAlchemyAdapter(BaseAdapter):
             return text(where_sql.removeprefix(" WHERE ")), params
         if not isinstance(where, Mapping):
             raise QueryError("where must be a mapping, string, or None")
+        return self._build_mapping_expression(entity, table, where, prefix="w")
+
+    def _split_lookup(self, raw_key: str) -> tuple[str, str]:
+        if "__" not in raw_key:
+            return raw_key, "eq"
+        field, lookup = raw_key.rsplit("__", 1)
+        if not field:
+            raise QueryError("Invalid where field lookup")
+        return field, lookup.lower()
+
+    def _build_single_condition(
+        self,
+        entity: str,
+        table: Table,
+        raw_key: str,
+        value: Any,
+        *,
+        param_index: int,
+    ) -> tuple[Any, dict[str, Any], int]:
+        field, lookup = self._split_lookup(raw_key)
+        column = self._resolve_column(table, field)
+
+        if lookup == "null":
+            return (column.is_(None) if value else column.is_not(None)), {}, param_index
+        if lookup == "notnull":
+            return (column.is_not(None) if value else column.is_(None)), {}, param_index
+
+        if lookup == "in":
+            if not isinstance(value, (list, tuple)):
+                raise QueryError(f"Field '{field}' requires a list/tuple for __in lookup")
+            normalized_values = [self._normalize_value_for_column(entity, field, item) for item in value]
+            return column.in_(normalized_values), {}, param_index
+
+        operator_map = {
+            "eq": lambda col, param: col == bindparam(param),
+            "ne": lambda col, param: col != bindparam(param),
+            "gt": lambda col, param: col > bindparam(param),
+            "gte": lambda col, param: col >= bindparam(param),
+            "lt": lambda col, param: col < bindparam(param),
+            "lte": lambda col, param: col <= bindparam(param),
+            "like": lambda col, param: col.like(bindparam(param)),
+        }
+        if lookup not in operator_map:
+            raise QueryError(f"Unsupported lookup '__{lookup}' for field '{field}'")
+
+        pname = f"w_{param_index}"
+        normalized_value = self._normalize_value_for_column(entity, field, value)
+        expression = operator_map[lookup](column, pname)
+        return expression, {pname: normalized_value}, param_index + 1
+
+    def _build_mapping_expression(
+        self,
+        entity: str,
+        table: Table,
+        where: Mapping[str, Any],
+        *,
+        prefix: str,
+        param_index: int = 0,
+    ) -> tuple[Any | None, dict[str, Any]]:
         conditions = []
         params: dict[str, Any] = {}
-        for idx, (key, value) in enumerate(where.items()):
-            column = self._resolve_column(table, key)
-            pname = f"w_{idx}"
-            conditions.append(column == bindparam(pname))
-            params[pname] = self._normalize_value_for_column(entity, key, value)
+
+        for key, value in where.items():
+            if key == "$and":
+                if not isinstance(value, (list, tuple)) or not value:
+                    raise QueryError("$and requires a non-empty list of condition mappings")
+                nested_parts = []
+                for item in value:
+                    if not isinstance(item, Mapping):
+                        raise QueryError("$and entries must be mappings")
+                    nested_expr, nested_params = self._build_mapping_expression(
+                        entity,
+                        table,
+                        item,
+                        prefix=prefix,
+                        param_index=param_index,
+                    )
+                    param_index += len(nested_params)
+                    if nested_expr is not None:
+                        nested_parts.append(nested_expr)
+                        params.update(nested_params)
+                if nested_parts:
+                    conditions.append(and_(*nested_parts))
+                continue
+
+            if key == "$or":
+                if not isinstance(value, (list, tuple)) or not value:
+                    raise QueryError("$or requires a non-empty list of condition mappings")
+                nested_parts = []
+                for item in value:
+                    if not isinstance(item, Mapping):
+                        raise QueryError("$or entries must be mappings")
+                    nested_expr, nested_params = self._build_mapping_expression(
+                        entity,
+                        table,
+                        item,
+                        prefix=prefix,
+                        param_index=param_index,
+                    )
+                    param_index += len(nested_params)
+                    if nested_expr is not None:
+                        nested_parts.append(nested_expr)
+                        params.update(nested_params)
+                if nested_parts:
+                    from sqlalchemy import or_
+
+                    conditions.append(or_(*nested_parts))
+                continue
+
+            expr, expr_params, param_index = self._build_single_condition(
+                entity,
+                table,
+                str(key),
+                value,
+                param_index=param_index,
+            )
+            conditions.append(expr)
+            params.update(expr_params)
+
         if not conditions:
             return None, {}
         return and_(*conditions), params

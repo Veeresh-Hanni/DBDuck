@@ -12,6 +12,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from colorama import Fore, Style, init as colorama_init
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -27,6 +28,24 @@ _SUPPORTED_BACKENDS = {
     "vector": ["qdrant"],
     # "ai": ["openai", "azure-openai", "bedrock", "vertexai", "ollama"],
 }
+
+colorama_init()
+
+
+def _color(text: str, color: str) -> str:
+    return f"{color}{text}{Style.RESET_ALL}"
+
+
+def _print_error(message: str) -> None:
+    print(_color(message, Fore.RED))
+
+
+def _print_hint(message: str) -> None:
+    print(_color(message, Fore.YELLOW))
+
+
+def _print_success(message: str) -> None:
+    print(_color(message, Fore.GREEN))
 
 
 def _root_exception_message(exc: BaseException) -> str:
@@ -79,7 +98,10 @@ def _make_db(args: argparse.Namespace) -> UDOM:
     db_type, db_instance = _resolve_backend_inputs(args.url, args.db_type, args.db_instance)
     args.db_type = db_type
     args.db_instance = db_instance
-    return UDOM(db_type=db_type, db_instance=db_instance, url=args.url)
+    log_level = os.getenv("DBDUCK_CLI_LOG_LEVEL")
+    if not log_level:
+        log_level = "DEBUG" if getattr(args, "debug_errors", False) else "CRITICAL"
+    return UDOM(db_type=db_type, db_instance=db_instance, url=args.url, log_level=log_level)
 
 
 def _infer_backend_from_url(url: str) -> tuple[str, str] | None:
@@ -342,7 +364,7 @@ def _cmd_shell(args: argparse.Namespace) -> int:
     db = _make_db(args)
     db.ping()
     _setup_readline()
-    print("DBDuck shell. Enter UQL commands, or type 'exit'.")
+    _print_success("DBDuck shell. Enter UQL commands, or type 'exit'.")
     try:
         while True:
             try:
@@ -354,29 +376,29 @@ def _cmd_shell(args: argparse.Namespace) -> int:
                 result = _run_shell_command(db, args.db_type, line)
                 print(_format_shell_result(line, result))
             except ConnectionError as exc:
-                print(f"error: Cannot reach database - {exc}")
+                _print_error(f"error: Cannot reach database - {exc}")
                 detail = _friendly_error_detail(exc)
                 if detail:
-                    print(f"hint:  {detail}")
-                print("hint:  Check your connection URL with: dbduck ping --url ...")
+                    _print_hint(f"hint:  {detail}")
+                _print_hint("hint:  Check your connection URL with: dbduck ping --url ...")
             except QueryError as exc:
                 msg = str(exc)
-                print(f"error: {msg}")
+                _print_error(f"error: {msg}")
                 first_word = line.strip().split()[0].upper() if line.strip() else ""
                 known = {"FIND", "CREATE", "DELETE", "UPDATE", "COUNT", "SHOW", "DESCRIBE", "HELP", "PING", "VERSION", "HISTORY", "CLEAR", "EXPORT"}
                 if first_word not in known and first_word:
                     closest = min(known, key=lambda k: abs(len(k) - len(first_word)))
-                    print(f"hint:  Unknown command '{first_word}'. Did you mean: {closest}? Type HELP for all commands.")
+                    _print_hint(f"hint:  Unknown command '{first_word}'. Did you mean: {closest}? Type HELP for all commands.")
                 elif "injection" in msg.lower():
-                    print("security: Blocked potential injection attempt. Event logged to security_logs.")
+                    _print_hint("security: Blocked potential injection attempt. Event logged to security_logs.")
                 elif "not found" in msg.lower() or "execution failed" in msg.lower():
-                    print("hint:  Use SHOW TABLES to see available tables.")
+                    _print_hint("hint:  Use SHOW TABLES to see available tables.")
             except TransactionError as exc:
-                print(f"error: Transaction failed - {exc}")
+                _print_error(f"error: Transaction failed - {exc}")
             except KeyboardInterrupt:
-                print("\nUse 'exit' to quit the shell.")
+                _print_hint("\nUse 'exit' to quit the shell.")
     except Exception as exc:
-        print(f"error: {exc}")
+        _print_error(f"error: {exc}")
         if getattr(args, "debug_errors", False):
             traceback.print_exception(type(exc), exc, exc.__traceback__)
     finally:
@@ -392,13 +414,13 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
         print(_format_shell_result(f"DESCRIBE {entity}", _inspect_entity(db, args.db_type, entity)))
         return 0
     except ConnectionError as exc:
-        print(f"error: Cannot reach database - {exc}")
+        _print_error(f"error: Cannot reach database - {exc}")
         detail = _friendly_error_detail(exc)
         if detail:
-            print(f"hint:  {detail}")
+            _print_hint(f"hint:  {detail}")
         return 1
     except QueryError as exc:
-        print(f"error: {exc}")
+        _print_error(f"error: {exc}")
         return 1
     finally:
         db.close()
@@ -446,16 +468,16 @@ def app(argv: list[str] | None = None) -> int:
         parser.error("Unknown command")
         return 1
     except ConnectionError as exc:
-        print(f"error: Cannot reach database - {exc}")
+        _print_error(f"error: Cannot reach database - {exc}")
         detail = _friendly_error_detail(exc)
         if detail:
-            print(f"hint:  {detail}")
+            _print_hint(f"hint:  {detail}")
         return 1
     except QueryError as exc:
-        print(f"error: {exc}")
+        _print_error(f"error: {exc}")
         return 1
     except TransactionError as exc:
-        print(f"error: Transaction failed - {exc}")
+        _print_error(f"error: Transaction failed - {exc}")
         return 1
 
 

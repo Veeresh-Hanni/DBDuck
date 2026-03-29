@@ -110,6 +110,27 @@ class UModel:
             raise QueryError("No UDOM instance bound. Use Model.bind(db) or pass db=...")
         return target
 
+    @classmethod
+    def query(cls: type[TModel], db=None) -> "ModelQueryBuilder[TModel]":
+        """Return a QueryBuilder for fluent query construction on this model.
+
+        The ModelQueryBuilder wraps QueryBuilder to return typed model instances.
+
+        Args:
+            db: Optional UDOM instance (uses bound instance if not provided).
+
+        Returns:
+            A ModelQueryBuilder for chaining.
+
+        Example:
+            User.bind(db)
+            users = User.query().where(active=True).order("name").find()
+            user = User.query().where(id=1).first()
+            count = User.query().where(role="admin").count()
+        """
+        resolved = cls._resolve_db(db)
+        return ModelQueryBuilder(cls, resolved)
+
     def _resolve_instance_db(self, db=None):
         target = db if db is not None else getattr(self, "_udom", None) or self.__class__._udom
         if target is None:
@@ -476,3 +497,184 @@ class UModel:
         if args:
             return type(None) in args
         return False
+
+
+from typing import Generic
+
+class ModelQueryBuilder(Generic[TModel]):
+    """QueryBuilder wrapper that returns typed UModel instances.
+
+    Wraps the standard QueryBuilder to provide model-aware results.
+    All chainable methods return self, terminal methods return model instances.
+    """
+
+    def __init__(self, model_cls: type[TModel], udom) -> None:
+        """Initialize with a model class and UDOM instance."""
+        from ..query_builder import QueryBuilder
+        self._model_cls = model_cls
+        self._udom = udom
+        self._builder = QueryBuilder(udom, model_cls.get_name())
+
+    def where(self, conditions: Mapping[str, Any] | str | None = None, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
+        """Add WHERE conditions."""
+        self._builder.where(conditions, **kwargs)
+        return self
+
+    def where_or(self, *condition_groups: Mapping[str, Any]) -> "ModelQueryBuilder[TModel]":
+        """Add OR conditions."""
+        self._builder.where_or(*condition_groups)
+        return self
+
+    def where_in(self, field: str, values: list[Any]) -> "ModelQueryBuilder[TModel]":
+        """Add IN condition."""
+        self._builder.where_in(field, values)
+        return self
+
+    def where_not(self, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
+        """Add NOT conditions."""
+        self._builder.where_not(**kwargs)
+        return self
+
+    def where_gt(self, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
+        """Add greater-than conditions."""
+        self._builder.where_gt(**kwargs)
+        return self
+
+    def where_gte(self, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
+        """Add greater-than-or-equal conditions."""
+        self._builder.where_gte(**kwargs)
+        return self
+
+    def where_lt(self, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
+        """Add less-than conditions."""
+        self._builder.where_lt(**kwargs)
+        return self
+
+    def where_lte(self, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
+        """Add less-than-or-equal conditions."""
+        self._builder.where_lte(**kwargs)
+        return self
+
+    def where_like(self, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
+        """Add LIKE conditions."""
+        self._builder.where_like(**kwargs)
+        return self
+
+    def where_null(self, *fields: str) -> "ModelQueryBuilder[TModel]":
+        """Add IS NULL conditions."""
+        self._builder.where_null(*fields)
+        return self
+
+    def where_not_null(self, *fields: str) -> "ModelQueryBuilder[TModel]":
+        """Add IS NOT NULL conditions."""
+        self._builder.where_not_null(*fields)
+        return self
+
+    def select(self, *fields: str) -> "ModelQueryBuilder[TModel]":
+        """Specify fields to return."""
+        self._builder.select(*fields)
+        return self
+
+    def order(self, field: str, direction: str = "ASC") -> "ModelQueryBuilder[TModel]":
+        """Set ORDER BY."""
+        self._builder.order(field, direction)
+        return self
+
+    def order_by(self, order_expr: str) -> "ModelQueryBuilder[TModel]":
+        """Set ORDER BY with raw expression."""
+        self._builder.order_by(order_expr)
+        return self
+
+    def limit(self, count: int) -> "ModelQueryBuilder[TModel]":
+        """Set result limit."""
+        self._builder.limit(count)
+        return self
+
+    def offset(self, count: int) -> "ModelQueryBuilder[TModel]":
+        """Set result offset."""
+        self._builder.offset(count)
+        return self
+
+    def page(self, page_num: int, page_size: int = 20) -> "ModelQueryBuilder[TModel]":
+        """Set pagination."""
+        self._builder.page(page_num, page_size)
+        return self
+
+    def group_by(self, *fields: str) -> "ModelQueryBuilder[TModel]":
+        """Set GROUP BY fields."""
+        self._builder.group_by(*fields)
+        return self
+
+    def having(self, conditions: Mapping[str, Any] | str) -> "ModelQueryBuilder[TModel]":
+        """Set HAVING conditions."""
+        self._builder.having(conditions)
+        return self
+
+    def metrics(self, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
+        """Set aggregation metrics."""
+        self._builder.metrics(**kwargs)
+        return self
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Terminal Methods - return model instances
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def find(self) -> list[TModel]:
+        """Execute query and return list of model instances."""
+        rows = self._builder.find()
+        return [self._model_cls.from_dict(row) for row in rows if isinstance(row, Mapping)]
+
+    def first(self) -> TModel | None:
+        """Execute query and return first model instance or None."""
+        row = self._builder.first()
+        if row is None:
+            return None
+        return self._model_cls.from_dict(row) if isinstance(row, Mapping) else None
+
+    def count(self) -> int:
+        """Return count of matching records."""
+        return self._builder.count()
+
+    def exists(self) -> bool:
+        """Check if any records match."""
+        return self._builder.exists()
+
+    def update(self, data: Mapping[str, Any]) -> Any:
+        """Update matching records."""
+        return self._builder.update(data)
+
+    def delete(self) -> Any:
+        """Delete matching records."""
+        return self._builder.delete()
+
+    def aggregate(
+        self,
+        *,
+        metrics: Mapping[str, Any] | None = None,
+        pipeline: list[Mapping[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Execute aggregation query."""
+        return self._builder.aggregate(metrics=metrics, pipeline=pipeline)
+
+    def find_page(self, page: int = 1, page_size: int = 20) -> dict[str, Any]:
+        """Execute paginated query with model instances."""
+        result = self._builder.find_page(page=page, page_size=page_size)
+        result["items"] = [
+            self._model_cls.from_dict(item) for item in result.get("items", []) if isinstance(item, Mapping)
+        ]
+        return result
+
+    def clone(self) -> "ModelQueryBuilder[TModel]":
+        """Create a copy of this builder."""
+        new_builder = ModelQueryBuilder(self._model_cls, self._udom)
+        new_builder._builder = self._builder.clone()
+        return new_builder
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return query state as dictionary."""
+        return self._builder.to_dict()
+
+    def __repr__(self) -> str:
+        """Return string representation."""
+        return f"ModelQueryBuilder({self._model_cls.__name__}, {repr(self._builder)})"
+

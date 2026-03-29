@@ -34,8 +34,18 @@ class SchemaValidator:
         if isinstance(where, Mapping):
             if not where:
                 raise QueryError("where mapping cannot be empty")
-            for key in where:
-                cls.validate_entity(str(key))
+            for key, value in where.items():
+                key_text = str(key)
+                if key_text in {"$and", "$or"}:
+                    if not isinstance(value, (list, tuple)) or not value:
+                        raise QueryError(f"{key_text} must be a non-empty list of condition mappings")
+                    for item in value:
+                        if not isinstance(item, Mapping):
+                            raise QueryError(f"{key_text} entries must be mappings")
+                        cls.validate_find_where(item)
+                    continue
+                field_name = key_text.rsplit("__", 1)[0] if "__" in key_text else key_text
+                cls.validate_entity(field_name)
             return where
         if isinstance(where, str):
             text = where.strip()
@@ -43,4 +53,3 @@ class SchemaValidator:
                 raise QueryError("where string cannot be empty")
             return text
         raise QueryError("where must be a mapping, string, or None")
-

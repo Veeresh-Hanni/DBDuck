@@ -152,8 +152,80 @@ print(db.find_related("User", id="u1", rel_type="WORKS_AT", target_label="Compan
 - `uexecute(uql)`: execute UQL through backend-specific parameterized translation.
 - `create_relationship(...) / find_related(...) / shortest_path(...)`: graph-specific helpers.
 - `create_collection(...) / upsert_vector(...) / search_similar(...)`: vector-specific helpers.
+- `table(entity)`: returns a fluent QueryBuilder for chainable queries.
 
 Full docs live in the codebase docstrings and examples.
+
+## Query Builder DSL
+
+DBDuck 0.3.0 introduces a fluent Query Builder API for constructing queries with method chaining:
+
+```python
+from DBDuck import UDOM
+
+db = UDOM(url="sqlite:///app.db")
+
+# Fluent query building
+users = db.table("users").where(active=True).order("name").limit(10).find()
+user = db.table("users").where(id=1).first()
+count = db.table("users").where(role="admin").count()
+
+# Field projection
+db.table("users").select("id", "name", "email").find()
+
+# Pagination
+db.table("users").page(2, 25).find()
+db.table("users").find_page(page=2, page_size=25)
+
+# Comparison operators
+db.table("users").where_gt(age=18).find()           # age > 18
+db.table("users").where_gte(age=21).find()          # age >= 21
+db.table("users").where_lt(age=65).find()           # age < 65
+db.table("users").where_in("role", ["admin", "mod"]).find()
+
+# Mutations
+db.table("users").where(id=1).update({"name": "Updated"})
+db.table("users").where(id=1).delete()
+db.table("users").create({"name": "New User", "email": "new@example.com"})
+
+# Aggregation
+db.table("orders").group_by("status").metrics(total="count").aggregate()
+
+# Check existence
+if db.table("users").where(email="test@example.com").exists():
+    print("User exists")
+
+# Clone for reuse
+base = db.table("users").where(active=True)
+admins = base.clone().where(role="admin").find()
+regular = base.clone().where(role="user").find()
+```
+
+### Query Builder Across All Backends
+
+The Query Builder works uniformly across all database types:
+
+```python
+# SQL (SQLite, MySQL, PostgreSQL, SQL Server)
+sql_db = UDOM(url="postgresql+psycopg2://postgres:pass@localhost/app")
+sql_db.table("users").where(active=True).order("name").limit(10).find()
+
+# NoSQL (MongoDB)
+mongo_db = UDOM(db_type="nosql", db_instance="mongodb", url="mongodb://localhost:27017/app")
+mongo_db.table("profiles").where(active=True).find()
+mongo_db.table("orders").group_by("status").metrics(total="count").aggregate()
+
+# Graph (Neo4j)
+graph_db = UDOM(db_type="graph", db_instance="neo4j", url="bolt://localhost:7687")
+graph_db.table("User").where(name="Alice").find()
+graph_db.table("User").find_related(id="u1", rel_type="FOLLOWS", direction="out")
+graph_db.table("User").create_relationship("u1", "FOLLOWS", "User", "u2")
+
+# Vector (Qdrant)
+vector_db = UDOM(db_type="vector", db_instance="qdrant", url="http://localhost:6333")
+vector_db.table("embeddings").where(category="tech").search_similar([0.1, 0.2, 0.3], top_k=5)
+vector_db.table("embeddings").upsert_vector("v1", [0.1, 0.2, 0.3], {"label": "test"})
+```
 
 ## CLI
 ```bash
@@ -164,6 +236,7 @@ dbduck version
 ```
 
 For SQL backends, `dbduck` can infer the backend from the URL, so `--type` and `--instance` are optional.
+CLI output is quiet by default and colorized for easier scanning in the terminal.
 
 ## UModel
 ```python
@@ -181,6 +254,45 @@ user = User(id=1, email="user@example.com", password="plain-text")
 user.save()
 print(User.find_one(where={"id": 1}).to_dict())
 print(User.find_one(where={"id": 1}).verify_secret("password", "plain-text"))
+```
+
+### UModel with Query Builder
+
+UModel also supports the fluent Query Builder via `Model.query()`:
+
+```python
+from DBDuck import UDOM, UModel
+
+class User(UModel):
+    __entity__ = "users"
+    id: int
+    name: str
+    role: str
+    active: bool
+
+User.bind(UDOM(url="sqlite:///app.db"))
+
+# Fluent queries returning typed model instances
+users = User.query().where(active=True).order("name").find()  # list[User]
+user = User.query().where(id=1).first()                       # User | None
+count = User.query().where(role="admin").count()              # int
+
+# Chaining with comparison operators
+adults = User.query().where_gte(age=18).where_lt(age=65).find()
+
+# Clone for reusable base queries
+active = User.query().where(active=True)
+admins = active.clone().where(role="admin").find()
+users = active.clone().where(role="user").find()
+
+# Mutations
+User.query().where(id=1).update({"name": "Updated"})
+User.query().where(id=1).delete()
+
+# Pagination with model instances
+page = User.query().find_page(page=2, page_size=25)
+for user in page["items"]:  # Each item is a User instance
+    print(user.name)
 ```
 
 ## Errors
