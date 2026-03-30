@@ -201,7 +201,7 @@ Click **Fork** on GitHub.
 ### 2. Clone Your Fork
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/DBDuck.git
+git clone https://github.com/Veeresh-Hanni/DBDuck.git
 cd DBDuck
 ```
 
