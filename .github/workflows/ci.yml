@@ -51,4 +51,4 @@ jobs:
         run: pip-audit --desc
 
       - name: Static security scan
-        run: bandit -q -r DBDuck -c .bandit
+        run: bandit -r  DBDuck 

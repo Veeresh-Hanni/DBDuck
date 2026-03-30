@@ -384,6 +384,9 @@ def _cmd_shell(args: argparse.Namespace) -> int:
             except QueryError as exc:
                 msg = str(exc)
                 _print_error(f"error: {msg}")
+                if getattr(args, "debug_errors", False):
+                    print(f"debug-error: {exc!r}", file=sys.stderr)
+                    traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
                 first_word = line.strip().split()[0].upper() if line.strip() else ""
                 known = {"FIND", "CREATE", "DELETE", "UPDATE", "COUNT", "SHOW", "DESCRIBE", "HELP", "PING", "VERSION", "HISTORY", "CLEAR", "EXPORT"}
                 if first_word not in known and first_word:
