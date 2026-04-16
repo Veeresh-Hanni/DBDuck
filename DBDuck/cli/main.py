@@ -60,17 +60,26 @@ def _root_exception_message(exc: BaseException) -> str:
     return str(current).strip() or current.__class__.__name__
 
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _resolve_database_url() -> str:
+    url = os.getenv("DATABASE_URL") or os.getenv("DBDUCK_DATABASE_URL")
+    if not url:
+        raise SystemExit("DATABASE_URL or DBDUCK_DATABASE_URL is required")
+    return url
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dbduck", description="DBDuck command-line interface")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     ping = subparsers.add_parser("ping", help="Connect and ping the backend")
-    ping.add_argument("--url", required=True)
     ping.add_argument("--type", dest="db_type")
     ping.add_argument("--instance", dest="db_instance")
 
     shell = subparsers.add_parser("shell", help="Interactive UQL shell")
-    shell.add_argument("--url", required=True)
     shell.add_argument("--type", dest="db_type")
     shell.add_argument("--instance", dest="db_instance")
     shell.add_argument(
@@ -80,13 +89,21 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     inspect_cmd = subparsers.add_parser("inspect", help="Inspect an entity schema or structure")
-    inspect_cmd.add_argument("--url", required=True)
     inspect_cmd.add_argument("--type", dest="db_type")
     inspect_cmd.add_argument("--entity", required=True)
     inspect_cmd.add_argument("--instance", dest="db_instance")
 
+    makemigrations = subparsers.add_parser("makemigrations", help="Create an Alembic revision from UModel classes")
+    makemigrations.add_argument("--module", required=True, help="Import path containing UModel classes")
+    makemigrations.add_argument("--message", required=True, help="Alembic revision message")
+    makemigrations.add_argument(
+        "--model",
+        dest="models",
+        action="append",
+        help="Limit autogeneration to a specific model class name; repeat to include more",
+    )
+
     migrate = subparsers.add_parser("migrate", help="Run Alembic migrations for SQL backends")
-    migrate.add_argument("--url", required=True)
     migrate.add_argument("--direction", required=True, choices=["up", "down"])
     migrate.add_argument("--revision", default="head")
 
@@ -95,13 +112,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _make_db(args: argparse.Namespace) -> UDOM:
-    db_type, db_instance = _resolve_backend_inputs(args.url, args.db_type, args.db_instance)
+    url = _resolve_database_url()
+    db_type, db_instance = _resolve_backend_inputs(url, args.db_type, args.db_instance)
     args.db_type = db_type
     args.db_instance = db_instance
     log_level = os.getenv("DBDUCK_CLI_LOG_LEVEL")
     if not log_level:
         log_level = "DEBUG" if getattr(args, "debug_errors", False) else "CRITICAL"
-    return UDOM(db_type=db_type, db_instance=db_instance, url=args.url, log_level=log_level)
+    return UDOM(db_type=db_type, db_instance=db_instance, url=url, log_level=log_level)
 
 
 def _infer_backend_from_url(url: str) -> tuple[str, str] | None:
@@ -380,7 +398,7 @@ def _cmd_shell(args: argparse.Namespace) -> int:
                 detail = _friendly_error_detail(exc)
                 if detail:
                     _print_hint(f"hint:  {detail}")
-                _print_hint("hint:  Check your connection URL with: dbduck ping --url ...")
+                _print_hint("hint:  Check DATABASE_URL or DBDUCK_DATABASE_URL in your environment.")
             except QueryError as exc:
                 msg = str(exc)
                 _print_error(f"error: {msg}")
@@ -429,17 +447,58 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
         db.close()
 
 
-def _cmd_migrate(args: argparse.Namespace) -> int:
-    migrations_dir = Path("migrations") / "sql"
+def _run_alembic_command(*, command: list[str], env: dict[str, str]) -> int:
+    migrations_dir = _repo_root() / "migrations" / "sql"
     alembic_ini = migrations_dir / "alembic.ini"
     if not alembic_ini.exists():
         raise SystemExit("Alembic configuration not found at migrations/sql/alembic.ini")
+    completed = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(alembic_ini), *command],
+        check=False,
+        env=env,
+        cwd=str(_repo_root()),
+    )  # nosec B603
+    return int(completed.returncode)
+
+
+def _cmd_makemigrations(args: argparse.Namespace) -> int:
+    url = _resolve_database_url()
+    env = os.environ.copy()
+    env["DATABASE_URL"] = url
+    env["DBDUCK_DATABASE_URL"] = url
+    env["DBDUCK_MODEL_MODULE"] = args.module
+    if args.models:
+        env["DBDUCK_MODEL_NAMES"] = ",".join(args.models)
+    else:
+        env.pop("DBDUCK_MODEL_NAMES", None)
+    exit_code = _run_alembic_command(
+        command=["revision", "--autogenerate", "-m", args.message],
+        env=env,
+    )
+    if exit_code == 0:
+        print(
+            _format_result(
+                {
+                    "status": "revision_created",
+                    "module": args.module,
+                    "message": args.message,
+                    "models": args.models or [],
+                }
+            )
+        )
+    return exit_code
+
+
+def _cmd_migrate(args: argparse.Namespace) -> int:
     revision = args.revision if args.direction == "up" else "-1"
     env = os.environ.copy()
-    env["DBDUCK_DATABASE_URL"] = args.url
-    command = [sys.executable, "-m", "alembic", "-c", str(alembic_ini), "upgrade" if args.direction == "up" else "downgrade", revision]
-    completed = subprocess.run(command, check=False, env=env)  # nosec B603
-    return int(completed.returncode)
+    url = _resolve_database_url()
+    env["DATABASE_URL"] = url
+    env["DBDUCK_DATABASE_URL"] = url
+    return _run_alembic_command(
+        command=["upgrade" if args.direction == "up" else "downgrade", revision],
+        env=env,
+    )
 
 
 def _cmd_version() -> int:
@@ -464,6 +523,8 @@ def app(argv: list[str] | None = None) -> int:
             return _cmd_shell(args)
         if args.command == "inspect":
             return _cmd_inspect(args)
+        if args.command == "makemigrations":
+            return _cmd_makemigrations(args)
         if args.command == "migrate":
             return _cmd_migrate(args)
         if args.command == "version":

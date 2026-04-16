@@ -20,17 +20,18 @@ $env:DATABASE_URL="sqlite:///test.db"
 3. Create a revision:
 
 ```bash
-alembic -c migrations/sql/alembic.ini revision -m "init"
+dbduck makemigrations --module myapp.models --message "init"
 ```
 
 4. Apply migrations:
 
 ```bash
-alembic -c migrations/sql/alembic.ini upgrade head
+dbduck migrate --direction up
 ```
 
 ## Notes
 
-- `DATABASE_URL` is required for migration execution.
+- `DATABASE_URL` or `DBDUCK_DATABASE_URL` is required for migration execution.
+- `DBDUCK_MODEL_MODULE` is used during `makemigrations` to load `UModel` classes and build Alembic metadata.
 - Current UDOM SQL path supports dynamic table creation. This baseline exists to
   transition toward explicit schema-managed production deployments.

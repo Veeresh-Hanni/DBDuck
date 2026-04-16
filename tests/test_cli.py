@@ -16,17 +16,8 @@ def test_shell_prints_banner_and_prompt(monkeypatch, capsys, tmp_path) -> None:
 
     monkeypatch.setattr(builtins, "input", _fake_input)
 
-    exit_code = app(
-        [
-            "shell",
-            "--url",
-            f"sqlite:///{(tmp_path / 'cli.db').as_posix()}",
-            "--type",
-            "sql",
-            "--instance",
-            "sqlite",
-        ]
-    )
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{(tmp_path / 'cli.db').as_posix()}")
+    exit_code = app(["shell", "--type", "sql", "--instance", "sqlite"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -42,18 +33,8 @@ def test_shell_debug_errors_prints_traceback(monkeypatch, capsys, tmp_path) -> N
 
     monkeypatch.setattr(builtins, "input", _fake_input)
 
-    exit_code = app(
-        [
-            "shell",
-            "--url",
-            f"sqlite:///{(tmp_path / 'cli.db').as_posix()}",
-            "--type",
-            "sql",
-            "--instance",
-            "sqlite",
-            "--debug-errors",
-        ]
-    )
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{(tmp_path / 'cli.db').as_posix()}")
+    exit_code = app(["shell", "--type", "sql", "--instance", "sqlite", "--debug-errors"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -79,17 +60,8 @@ def test_shell_show_tables(monkeypatch, capsys, tmp_path) -> None:
 
     monkeypatch.setattr(builtins, "input", _fake_input)
 
-    exit_code = app(
-        [
-            "shell",
-            "--url",
-            f"sqlite:///{db_path.as_posix()}",
-            "--type",
-            "sql",
-            "--instance",
-            "sqlite",
-        ]
-    )
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
+    exit_code = app(["shell", "--type", "sql", "--instance", "sqlite"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -113,17 +85,8 @@ def test_shell_describe(monkeypatch, capsys, tmp_path) -> None:
 
     monkeypatch.setattr(builtins, "input", _fake_input)
 
-    exit_code = app(
-        [
-            "shell",
-            "--url",
-            f"sqlite:///{db_path.as_posix()}",
-            "--type",
-            "sql",
-            "--instance",
-            "sqlite",
-        ]
-    )
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
+    exit_code = app(["shell", "--type", "sql", "--instance", "sqlite"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -152,17 +115,8 @@ def test_shell_show_schema(monkeypatch, capsys, tmp_path) -> None:
 
     monkeypatch.setattr(builtins, "input", _fake_input)
 
-    exit_code = app(
-        [
-            "shell",
-            "--url",
-            f"sqlite:///{db_path.as_posix()}",
-            "--type",
-            "sql",
-            "--instance",
-            "sqlite",
-        ]
-    )
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
+    exit_code = app(["shell", "--type", "sql", "--instance", "sqlite"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -172,3 +126,89 @@ def test_shell_show_schema(monkeypatch, capsys, tmp_path) -> None:
     assert "unique" in captured.out
     assert "id" in captured.out
     assert "name" in captured.out
+
+
+def test_makemigrations_command_passes_model_module_to_alembic(monkeypatch, tmp_path, capsys) -> None:
+    models_file = tmp_path / "temp_models_make.py"
+    models_file.write_text(
+        "\n".join(
+            [
+                "from DBDuck.models import UModel, Column, Integer, String",
+                "",
+                "class User(UModel):",
+                "    class Meta:",
+                "        db_table = 'users'",
+                "",
+                "    id = Column(Integer, primary_key=True)",
+                "    name = Column(String, nullable=False)",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{(tmp_path / 'cli_make.db').as_posix()}")
+    recorded: dict[str, object] = {}
+
+    class _Completed:
+        returncode = 0
+
+    def _fake_run(command, check=False, env=None, cwd=None):
+        recorded["command"] = command
+        recorded["env"] = env
+        recorded["cwd"] = cwd
+        return _Completed()
+
+    monkeypatch.setattr("DBDuck.cli.main.subprocess.run", _fake_run)
+    exit_code = app(
+        [
+            "makemigrations",
+            "--module",
+            "temp_models_make",
+            "--model",
+            "User",
+            "--message",
+            "init-users",
+        ]
+    )
+
+    captured_out = capsys.readouterr()
+    assert exit_code == 0
+    command = recorded["command"]
+    env = recorded["env"]
+    assert "revision" in command
+    assert "--autogenerate" in command
+    assert env["DATABASE_URL"] == f"sqlite:///{(tmp_path / 'cli_make.db').as_posix()}"
+    assert env["DBDUCK_DATABASE_URL"] == f"sqlite:///{(tmp_path / 'cli_make.db').as_posix()}"
+    assert env["DBDUCK_MODEL_MODULE"] == "temp_models_make"
+    assert env["DBDUCK_MODEL_NAMES"] == "User"
+    assert '"status": "revision_created"' in captured_out.out
+
+
+def test_migrate_command_uses_database_url_env(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _Completed:
+        returncode = 0
+
+    def _fake_run(command, check=False, env=None):
+        captured["command"] = command
+        captured["env"] = env
+        return _Completed()
+
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///env_cli_migrate.db")
+    monkeypatch.setattr("DBDuck.cli.main.subprocess.run", _fake_run)
+    exit_code = app(["migrate", "--direction", "up"])
+    assert exit_code == 0
+    env = captured["env"]
+    assert env["DATABASE_URL"] == "sqlite:///env_cli_migrate.db"
+    assert env["DBDUCK_DATABASE_URL"] == "sqlite:///env_cli_migrate.db"
+
+
+def test_ping_command_uses_database_url_env(monkeypatch, capsys, tmp_path) -> None:
+    db_url = f"sqlite:///{(tmp_path / 'cli_env_ping.db').as_posix()}"
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    exit_code = app(["ping"])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"ok": true' in captured.out.lower()

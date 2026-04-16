@@ -229,11 +229,16 @@ vector_db.table("embeddings").upsert_vector("v1", [0.1, 0.2, 0.3], {"label": "te
 
 ## CLI
 ```bash
-dbduck ping --url "postgresql+psycopg2://postgres:pass@localhost:5432/app"
-dbduck shell --url "sqlite:///app.db"
-dbduck inspect --url "sqlite:///app.db" --entity users
+$env:DATABASE_URL="sqlite:///app.db"
+dbduck makemigrations --module myapp.models --message "init users"
+dbduck migrate --direction up
+dbduck ping
+dbduck shell
+dbduck inspect --entity users
 dbduck version
 ```
+
+For production use, set `DATABASE_URL` or `DBDUCK_DATABASE_URL` and keep the URL out of CLI args.
 
 For SQL backends, `dbduck` can infer the backend from the URL, so `--type` and `--instance` are optional.
 CLI output is quiet by default and colorized for easier scanning in the terminal.
@@ -250,6 +255,7 @@ class User(UModel):
     password: str
 
 User.bind(UDOM(url="sqlite:///app.db"))
+User.migrate()
 user = User(id=1, email="user@example.com", password="plain-text")
 user.save()
 print(User.find_one(where={"id": 1}).to_dict())
@@ -271,6 +277,7 @@ class User(UModel):
     active: bool
 
 User.bind(UDOM(url="sqlite:///app.db"))
+User.migrate()
 
 # Fluent queries returning typed model instances
 users = User.query().where(active=True).order("name").find()  # list[User]
@@ -293,6 +300,23 @@ User.query().where(id=1).delete()
 page = User.query().find_page(page=2, page_size=25)
 for user in page["items"]:  # Each item is a User instance
     print(user.name)
+```
+
+For SQL-backed models, `UModel.migrate()` creates the table if missing and tracks additive column migrations in `dbduck_schema_migrations`.
+
+You can also migrate multiple models together:
+
+```python
+db = UDOM(url="sqlite:///app.db")
+db.migrate_models(User, Order, Product)
+```
+
+For production-style SQL schema changes, prefer Alembic via the CLI:
+
+```bash
+$env:DATABASE_URL="sqlite:///app.db"
+dbduck makemigrations --module myapp.models --message "add user age"
+dbduck migrate --direction up
 ```
 
 ## Errors
@@ -322,4 +346,3 @@ Next up: deeper vector backends, richer schema migration workflows, Redis and Dy
 ## Contributing
 Issues, discussions, and pull requests are welcome.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and contribution guidelines.
-

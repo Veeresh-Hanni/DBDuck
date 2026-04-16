@@ -125,8 +125,9 @@ Important secure default:
 Use Alembic baseline in `migrations/sql/`:
 
 ```bash
-alembic -c migrations/sql/alembic.ini revision -m "init"
-alembic -c migrations/sql/alembic.ini upgrade head
+$env:DATABASE_URL="sqlite:///test.db"
+dbduck makemigrations --module myapp.models --message "init"
+dbduck migrate --direction up
 ```
 
 ## 10. Mongo Integration Tests

@@ -6,19 +6,30 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from DBDuck.alembic_support import build_metadata_from_models, load_model_classes
+
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Explicit models metadata can be wired here when static schema is introduced.
-target_metadata = None
+def _target_metadata():
+    module_name = os.getenv("DBDUCK_MODEL_MODULE", "").strip()
+    model_names_raw = os.getenv("DBDUCK_MODEL_NAMES", "").strip()
+    if not module_name:
+        return None
+    model_names = [item.strip() for item in model_names_raw.split(",") if item.strip()] if model_names_raw else []
+    model_classes = load_model_classes(module_name, model_names)
+    return build_metadata_from_models(model_classes)
+
+
+target_metadata = _target_metadata()
 
 
 def _database_url() -> str:
-    url = os.getenv("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+    url = os.getenv("DATABASE_URL") or os.getenv("DBDUCK_DATABASE_URL") or config.get_main_option("sqlalchemy.url")
     if not url:
-        raise RuntimeError("DATABASE_URL is required for Alembic migrations")
+        raise RuntimeError("DATABASE_URL or DBDUCK_DATABASE_URL is required for Alembic migrations")
     return url
 
 

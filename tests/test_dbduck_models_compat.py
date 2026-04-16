@@ -149,3 +149,90 @@ def test_dbduck_models_relations_one_to_one_one_to_many_many_to_many(tmp_path) -
     tags = inv.tags
     assert len(tags) == 2
     assert sorted(t.name for t in tags) == ["paid", "urgent"]
+
+
+def test_dbduck_models_create_table_and_migration_history(tmp_path) -> None:
+    db_file = tmp_path / "dbduck_models_migrations.db"
+    db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
+
+    class UserV1(UModel):
+        class Meta:
+            db_table = "users"
+
+        id = Column(Integer, primary_key=True)
+        name = Column(String, nullable=False)
+        role = Column(String, default="user")
+        active = Column(Boolean, default=False)
+
+    UserV1.bind(db)
+    created = UserV1.create_table()
+    assert created["table"] == "users"
+
+    UserV1(id=1, name="Asha", role="admin", active=True).save()
+    history = UserV1.migration_history()
+    assert len(history) == 1
+    assert history[0]["operation"] == "create_table"
+
+
+def test_dbduck_models_migrate_adds_missing_columns_without_recreating_db(tmp_path) -> None:
+    db_file = tmp_path / "dbduck_models_add_column.db"
+    db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
+
+    class UserV1(UModel):
+        class Meta:
+            db_table = "users"
+
+        id = Column(Integer, primary_key=True)
+        name = Column(String, nullable=False)
+        active = Column(Boolean, default=False)
+
+    class UserV2(UModel):
+        class Meta:
+            db_table = "users"
+
+        id = Column(Integer, primary_key=True)
+        name = Column(String, nullable=False)
+        active = Column(Boolean, default=False)
+        age = Column(Integer, nullable=True)
+
+    UserV1.bind(db)
+    UserV1.create_table()
+    UserV1(id=1, name="Asha", active=True).save()
+
+    UserV2.bind(db)
+    migrated = UserV2.migrate()
+    assert migrated["created"] is False
+    assert "age" in migrated["added_columns"]
+
+    UserV2(id=2, name="Mira", active=False, age=29).save()
+    fetched = UserV2.find_one(where={"id": 2})
+    assert fetched is not None
+    assert fetched.age == 29
+
+    history = UserV2.migration_history()
+    operations = [row["operation"] for row in history]
+    assert "create_table" in operations
+    assert "add_column" in operations
+
+
+def test_udom_migrate_models_runs_multiple_model_migrations(tmp_path) -> None:
+    db_file = tmp_path / "dbduck_migrate_models.db"
+    db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
+
+    class User(UModel):
+        class Meta:
+            db_table = "users"
+
+        id = Column(Integer, primary_key=True)
+        name = Column(String, nullable=False)
+
+    class Team(UModel):
+        class Meta:
+            db_table = "teams"
+
+        id = Column(Integer, primary_key=True)
+        title = Column(String, nullable=False)
+
+    results = db.migrate_models(User, Team)
+    tables = {item["table"] for item in results}
+    assert tables == {"users", "teams"}

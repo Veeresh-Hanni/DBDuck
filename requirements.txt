@@ -1,5 +1,6 @@
-﻿# SQL
+# SQL
 sqlalchemy
+alembic
 pymysql
 psycopg2-binary
 pyodbc
