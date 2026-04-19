@@ -13,6 +13,9 @@ import threading
 import re
 from typing import Any, Iterator, Mapping
 
+from sqlalchemy import inspect as sa_inspect
+
+from ..alembic_support import build_metadata_from_models
 from ..core import (
     AdapterRouter,
     SchemaValidator,
@@ -661,13 +664,47 @@ class UDOM:
     def migrate_models(self, *model_classes: type[UModel]) -> list[dict[str, Any]]:
         if not model_classes:
             raise QueryError("migrate_models requires at least one model class")
-        results: list[dict[str, Any]] = []
         for model_cls in model_classes:
             if not isinstance(model_cls, type) or not issubclass(model_cls, UModel):
                 raise QueryError("migrate_models expects UModel classes")
             model_cls.bind(self)
-            results.append(model_cls.migrate())
-        return results
+        if self.db_type != "sql":
+            return [model_cls.migrate() for model_cls in model_classes]
+
+        engine = getattr(getattr(self, "adapter", None), "engine", None)
+        if engine is None:
+            raise QueryError("Bound SQL backend does not expose a SQLAlchemy engine")
+
+        metadata = build_metadata_from_models(model_classes)
+        table_to_model = {model_cls.get_name(): model_cls for model_cls in model_classes}
+        inspector = sa_inspect(engine)
+        existing_tables = set(inspector.get_table_names())
+        results_by_table: dict[str, dict[str, Any]] = {}
+
+        first_model = model_classes[0]
+        first_model._ensure_schema_history_table(engine)
+
+        for table in metadata.sorted_tables:
+            model_cls = table_to_model.get(table.name)
+            if model_cls is None or table.name in existing_tables:
+                continue
+            table.create(bind=engine, checkfirst=True)
+            model_cls._record_schema_migration(engine, operation="create_table", details={"table": table.name})
+            model_cls._invalidate_sql_table_cache(self, table.name)
+            results_by_table[table.name] = {
+                "table": table.name,
+                "created": True,
+                "added_columns": [],
+                "warnings": [],
+            }
+            existing_tables.add(table.name)
+
+        for model_cls in model_classes:
+            if model_cls.get_name() in results_by_table:
+                continue
+            results_by_table[model_cls.get_name()] = model_cls.migrate()
+
+        return [results_by_table[model_cls.get_name()] for model_cls in model_classes]
 
     @staticmethod
     def _to_uql_value(value: Any) -> str:

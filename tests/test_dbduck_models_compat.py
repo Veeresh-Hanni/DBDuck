@@ -242,6 +242,47 @@ def test_udom_migrate_models_runs_multiple_model_migrations(tmp_path) -> None:
     assert tables == {"users", "teams"}
 
 
+def test_udom_migrate_models_creates_related_tables_in_dependency_order(tmp_path) -> None:
+    db_file = tmp_path / "dbduck_migrate_related_models.db"
+    db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
+
+    class Customer(UModel):
+        class Meta:
+            db_table = "customers_related"
+
+        id = Column(Integer, primary_key=True)
+        name = Column(String, nullable=False)
+
+    class Profile(UModel):
+        class Meta:
+            db_table = "profiles_related"
+
+        id = Column(Integer, primary_key=True)
+        customer_id = ForeignKey(Customer)
+        bio = Column(String, nullable=False)
+
+    class Order(UModel):
+        class Meta:
+            db_table = "orders_related"
+
+        id = Column(Integer, primary_key=True)
+        customer_id = ForeignKey(Customer)
+        status = Column(String, nullable=False, default="pending")
+
+    results = db.migrate_models(Customer, Profile, Order)
+
+    assert [item["table"] for item in results] == ["customers_related", "profiles_related", "orders_related"]
+    assert all(item["created"] is True for item in results)
+
+    Customer(id=1, name="Asha").save()
+    Profile(id=1, customer_id=1, bio="VIP").save()
+    Order(id=1, customer_id=1, status="pending").save()
+
+    assert Customer.find_one(where={"id": 1}) is not None
+    assert Profile.find_one(where={"id": 1}) is not None
+    assert Order.find_one(where={"id": 1}) is not None
+
+
 def test_dbduck_models_migrate_adds_non_nullable_column_when_default_exists(tmp_path) -> None:
     db_file = tmp_path / "dbduck_models_add_defaulted_column.db"
     db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
