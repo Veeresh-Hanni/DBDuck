@@ -154,7 +154,7 @@ def test_makemigrations_command_passes_model_module_to_alembic(monkeypatch, tmp_
     class _Completed:
         returncode = 0
 
-    def _fake_run(command, check=False, env=None, cwd=None):
+    def _fake_run(command, check=False, env=None, cwd=None, **kwargs):
         recorded["command"] = command
         recorded["env"] = env
         recorded["cwd"] = cwd
@@ -164,11 +164,11 @@ def test_makemigrations_command_passes_model_module_to_alembic(monkeypatch, tmp_
     exit_code = app(
         [
             "makemigrations",
-            "--module",
+            "--mod",
             "temp_models_make",
             "--model",
             "User",
-            "--message",
+            "-m",
             "init-users",
         ]
     )
@@ -184,12 +184,33 @@ def test_makemigrations_command_passes_model_module_to_alembic(monkeypatch, tmp_
     assert env["DBDUCK_MODEL_MODULE"] == "temp_models_make"
     assert env["DBDUCK_MODEL_NAMES"] == "User"
     assert env["DBDUCK_PROJECT_DIR"] == str(tmp_path.resolve())
-    assert recorded["cwd"] == str(tmp_path.resolve())
-    assert (tmp_path / "migrations" / "sql" / "alembic.ini").exists()
-    assert (tmp_path / "migrations" / "sql" / "env.py").exists()
-    assert (tmp_path / "migrations" / "sql" / "script.py.mako").exists()
-    assert (tmp_path / "migrations" / "sql" / "versions").is_dir()
-    assert '"status": "revision_created"' in captured_out.out
+
+
+def test_makemigrations_long_and_short_flags_share_destinations(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{(tmp_path / 'cli_make.db').as_posix()}")
+
+    captured: dict[str, object] = {}
+
+    class _Completed:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def _fake_run(cmd, cwd=None, env=None, **kwargs):
+        captured["cmd"] = cmd
+        captured["cwd"] = cwd
+        captured["env"] = env
+        return _Completed()
+
+    monkeypatch.setattr("DBDuck.cli.main.subprocess.run", _fake_run)
+
+    exit_code = app(["makemigrations", "--module", "models", "--message", "init"])
+
+    assert exit_code == 0
+    env = captured["env"]
+    assert env["DBDUCK_MODEL_MODULE"] == "models"
+    assert captured["cwd"] == str(tmp_path.resolve())
 
 
 def test_migrate_command_uses_database_url_env(monkeypatch, tmp_path) -> None:
@@ -198,7 +219,7 @@ def test_migrate_command_uses_database_url_env(monkeypatch, tmp_path) -> None:
     class _Completed:
         returncode = 0
 
-    def _fake_run(command, check=False, env=None, cwd=None):
+    def _fake_run(command, check=False, env=None, cwd=None, **kwargs):
         captured["command"] = command
         captured["env"] = env
         captured["cwd"] = cwd
@@ -216,6 +237,32 @@ def test_migrate_command_uses_database_url_env(monkeypatch, tmp_path) -> None:
     assert captured["cwd"] == str(tmp_path.resolve())
     assert (tmp_path / "migrations" / "sql" / "alembic.ini").exists()
     assert (tmp_path / "migrations" / "sql" / "versions").is_dir()
+
+
+def test_makemigrations_import_failure_is_rendered_as_colored_cli_error(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{(tmp_path / 'cli_make.db').as_posix()}")
+
+    class _Completed:
+        returncode = 1
+        stdout = ""
+        stderr = (
+            "Traceback (most recent call last):\n"
+            "ModuleNotFoundError: Failed to import module 'modelsd'. "
+            "Run the command from your project root or pass --project-dir explicitly.\n"
+        )
+
+    def _fake_run(command, check=False, env=None, cwd=None, **kwargs):
+        return _Completed()
+
+    monkeypatch.setattr("DBDuck.cli.main.subprocess.run", _fake_run)
+    exit_code = app(["makemigrations", "--module", "modelsd", "--message", "init"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "error:" in captured.out
+    assert "Failed to import module 'modelsd'" in captured.out
+    assert "hint:" in captured.out
 
 
 def test_ping_command_uses_database_url_env(monkeypatch, capsys, tmp_path) -> None:

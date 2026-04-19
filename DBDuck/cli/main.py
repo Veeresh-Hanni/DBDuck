@@ -183,8 +183,20 @@ def _build_parser() -> argparse.ArgumentParser:
     inspect_cmd.add_argument("--instance", dest="db_instance")
 
     makemigrations = subparsers.add_parser("makemigrations", help="Create an Alembic revision from UModel classes")
-    makemigrations.add_argument("--module", required=True, help="Import path containing UModel classes")
-    makemigrations.add_argument("--message", required=True, help="Alembic revision message")
+    makemigrations.add_argument(
+        "--module",
+        "--mod",
+        dest="module",
+        required=True,
+        help="Import path containing UModel classes",
+    )
+    makemigrations.add_argument(
+        "--message",
+        "-m",
+        dest="message",
+        required=True,
+        help="Alembic revision message",
+    )
     makemigrations.add_argument(
         "--project-dir",
         default=os.getcwd(),
@@ -334,6 +346,49 @@ def _friendly_error_detail(exc: BaseException) -> str | None:
     if "could not translate host name" in text or "name or service not known" in text:
         return "The hostname in the URL could not be resolved."
     return None
+
+
+def _extract_alembic_failure_message(stderr: str) -> str:
+    lines = [line.strip() for line in (stderr or "").splitlines() if line.strip()]
+    for line in reversed(lines):
+        if line.startswith(("Traceback", "File ")):
+            continue
+        if line.startswith(("INFO ", "Generating ")):
+            continue
+        if ": " in line and any(
+            token in line
+            for token in (
+                "Error",
+                "Exception",
+                "FAILED",
+                "ModuleNotFoundError",
+                "OperationalError",
+                "ProgrammingError",
+                "QueryError",
+            )
+        ):
+            return line
+        if line.startswith("FAILED:"):
+            return line
+    return lines[-1] if lines else "Alembic command failed"
+
+
+def _print_alembic_failure(stderr: str) -> None:
+    message = _extract_alembic_failure_message(stderr)
+    _print_error(f"error: {message}")
+    lowered = message.lower()
+    if "failed to import module" in lowered:
+        _print_hint("hint:  Check --module, run from your project root, or pass --project-dir explicitly.")
+        return
+    if "target database is not up to date" in lowered:
+        _print_hint("hint:  Apply existing migrations first with `dbduck migrate --direction up`, or use a fresh database.")
+        return
+    if "already an object named" in lowered or "already exists" in lowered:
+        _print_hint("hint:  Schema already exists in this database. Use either Alembic or `python migrate.py`, not both on the same DB.")
+        return
+    detail = _friendly_error_detail(Exception(message))
+    if detail:
+        _print_hint(f"hint:  {detail}")
 
 
 def _inspect_entity(db: UDOM, db_type: str, entity: str) -> Any:
@@ -557,7 +612,27 @@ def _run_alembic_command(*, command: list[str], env: dict[str, str]) -> int:
         check=False,
         env=env,
         cwd=str(project_dir.resolve()),
+        capture_output=True,
+        text=True,
     )  # nosec B603
+    stdout = (getattr(completed, "stdout", "") or "").strip()
+    stderr = (getattr(completed, "stderr", "") or "").strip()
+    if completed.returncode == 0:
+        if stdout:
+            print(stdout)
+        if stderr:
+            for line in stderr.splitlines():
+                clean = line.strip()
+                if not clean:
+                    continue
+                if clean.startswith("INFO "):
+                    print(_color(clean, Fore.CYAN))
+                elif clean.startswith("Generating "):
+                    _print_success(clean)
+                else:
+                    print(clean)
+    else:
+        _print_alembic_failure(stderr or stdout)
     return int(completed.returncode)
 
 
@@ -577,6 +652,7 @@ def _cmd_makemigrations(args: argparse.Namespace) -> int:
         env=env,
     )
     if exit_code == 0:
+        _print_success("makemigrations completed")
         print(
             _format_result(
                 {
@@ -597,10 +673,13 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
     env["DATABASE_URL"] = url
     env["DBDUCK_DATABASE_URL"] = url
     env["DBDUCK_PROJECT_DIR"] = str(Path(args.project_dir).resolve())
-    return _run_alembic_command(
+    exit_code = _run_alembic_command(
         command=["upgrade" if args.direction == "up" else "downgrade", revision],
         env=env,
     )
+    if exit_code == 0:
+        _print_success("migration completed")
+    return exit_code
 
 
 def _cmd_version() -> int:
