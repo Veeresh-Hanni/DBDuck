@@ -9,6 +9,7 @@ import subprocess  # nosec B404
 import sys
 import time
 import traceback
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,94 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _migration_template_asset(filename: str):
+    package_asset = resources.files("DBDuck.migrations.sql").joinpath(filename)
+    if package_asset.exists():
+        return package_asset
+
+    repo_asset = _repo_root() / "DBDuck" / "migrations" / "sql" / filename
+    if repo_asset.exists():
+        return repo_asset
+
+    return None
+
+
+def _write_text_if_missing(path: Path, content: str) -> None:
+    if not path.exists():
+        path.write_text(content, encoding="utf-8")
+
+
+def _ensure_project_migration_workspace(project_dir: Path) -> Path:
+    project_root = project_dir.resolve()
+    target_dir = project_root / "migrations" / "sql"
+    versions_dir = target_dir / "versions"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    versions_dir.mkdir(parents=True, exist_ok=True)
+
+    template_files = ("script.py.mako", "README.md")
+    for filename in template_files:
+        src = _migration_template_asset(filename)
+        dst = target_dir / filename
+        if src is None:
+            raise SystemExit(f"Migration template not found: {_repo_root() / 'migrations' / 'sql' / filename}")
+        if not dst.exists():
+            dst.write_bytes(src.read_bytes())
+
+    env_src = _migration_template_asset("env.py")
+    env_dst = target_dir / "env.py"
+    if env_src is None:
+        raise SystemExit(f"Migration template not found: {_repo_root() / 'migrations' / 'sql' / 'env.py'}")
+    env_dst.write_bytes(env_src.read_bytes())
+
+    _write_text_if_missing(
+        target_dir / "alembic.ini",
+        "\n".join(
+            [
+                "[alembic]",
+                "script_location = migrations/sql",
+                "prepend_sys_path = .",
+                "version_locations = migrations/sql/versions",
+                "sqlalchemy.url = sqlite:///test.db",
+                "",
+                "[loggers]",
+                "keys = root,sqlalchemy,alembic",
+                "",
+                "[handlers]",
+                "keys = console",
+                "",
+                "[formatters]",
+                "keys = generic",
+                "",
+                "[logger_root]",
+                "level = WARN",
+                "handlers = console",
+                "",
+                "[logger_sqlalchemy]",
+                "level = WARN",
+                "handlers =",
+                "qualname = sqlalchemy.engine",
+                "",
+                "[logger_alembic]",
+                "level = INFO",
+                "handlers =",
+                "qualname = alembic",
+                "",
+                "[handler_console]",
+                "class = StreamHandler",
+                "args = (sys.stderr,)",
+                "level = NOTSET",
+                "formatter = generic",
+                "",
+                "[formatter_generic]",
+                "format = %(levelname)-5.5s [%(name)s] %(message)s",
+                "",
+            ]
+        ),
+    )
+    _write_text_if_missing(versions_dir / ".gitkeep", "")
+    return target_dir
+
+
 def _resolve_database_url() -> str:
     url = os.getenv("DATABASE_URL") or os.getenv("DBDUCK_DATABASE_URL")
     if not url:
@@ -97,6 +186,11 @@ def _build_parser() -> argparse.ArgumentParser:
     makemigrations.add_argument("--module", required=True, help="Import path containing UModel classes")
     makemigrations.add_argument("--message", required=True, help="Alembic revision message")
     makemigrations.add_argument(
+        "--project-dir",
+        default=os.getcwd(),
+        help="Project root to add to Python imports before loading the model module (defaults to current directory)",
+    )
+    makemigrations.add_argument(
         "--model",
         dest="models",
         action="append",
@@ -106,6 +200,11 @@ def _build_parser() -> argparse.ArgumentParser:
     migrate = subparsers.add_parser("migrate", help="Run Alembic migrations for SQL backends")
     migrate.add_argument("--direction", required=True, choices=["up", "down"])
     migrate.add_argument("--revision", default="head")
+    migrate.add_argument(
+        "--project-dir",
+        default=os.getcwd(),
+        help="Project root used as the working directory for migrations (defaults to current directory)",
+    )
 
     subparsers.add_parser("version", help="Print DBDuck version and supported backends")
     return parser
@@ -448,7 +547,8 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
 
 
 def _run_alembic_command(*, command: list[str], env: dict[str, str]) -> int:
-    migrations_dir = _repo_root() / "migrations" / "sql"
+    project_dir = Path(env.get("DBDUCK_PROJECT_DIR", str(_repo_root())))
+    migrations_dir = _ensure_project_migration_workspace(project_dir)
     alembic_ini = migrations_dir / "alembic.ini"
     if not alembic_ini.exists():
         raise SystemExit("Alembic configuration not found at migrations/sql/alembic.ini")
@@ -456,7 +556,7 @@ def _run_alembic_command(*, command: list[str], env: dict[str, str]) -> int:
         [sys.executable, "-m", "alembic", "-c", str(alembic_ini), *command],
         check=False,
         env=env,
-        cwd=str(_repo_root()),
+        cwd=str(project_dir.resolve()),
     )  # nosec B603
     return int(completed.returncode)
 
@@ -467,6 +567,7 @@ def _cmd_makemigrations(args: argparse.Namespace) -> int:
     env["DATABASE_URL"] = url
     env["DBDUCK_DATABASE_URL"] = url
     env["DBDUCK_MODEL_MODULE"] = args.module
+    env["DBDUCK_PROJECT_DIR"] = str(Path(args.project_dir).resolve())
     if args.models:
         env["DBDUCK_MODEL_NAMES"] = ",".join(args.models)
     else:
@@ -495,6 +596,7 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
     url = _resolve_database_url()
     env["DATABASE_URL"] = url
     env["DBDUCK_DATABASE_URL"] = url
+    env["DBDUCK_PROJECT_DIR"] = str(Path(args.project_dir).resolve())
     return _run_alembic_command(
         command=["upgrade" if args.direction == "up" else "downgrade", revision],
         env=env,

@@ -658,6 +658,17 @@ class UDOM:
             raise QueryError("Model has no __indexes__ definition")
         return self.ensure_indexes(model_cls.get_name(), indexes)
 
+    def migrate_models(self, *model_classes: type[UModel]) -> list[dict[str, Any]]:
+        if not model_classes:
+            raise QueryError("migrate_models requires at least one model class")
+        results: list[dict[str, Any]] = []
+        for model_cls in model_classes:
+            if not isinstance(model_cls, type) or not issubclass(model_cls, UModel):
+                raise QueryError("migrate_models expects UModel classes")
+            model_cls.bind(self)
+            results.append(model_cls.migrate())
+        return results
+
     @staticmethod
     def _to_uql_value(value: Any) -> str:
         if isinstance(value, bool):

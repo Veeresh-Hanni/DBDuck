@@ -58,7 +58,7 @@ class Order(UModel):
     customer_id = ForeignKey(Customer, on_delete=CASCADE)
     paid = Column(BooleanField, default=False)
     status = Column(CharField, default="pending")
-    created_at = Column(DateTimeField, default="")
+    created_at = Column(DateTimeField, nullable=False)
     payment_provider = Column(CharField, default="")
     payment_order_id = Column(CharField, default="")
     payment_id = Column(CharField, default="")

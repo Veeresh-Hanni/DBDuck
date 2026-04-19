@@ -147,6 +147,7 @@ def test_makemigrations_command_passes_model_module_to_alembic(monkeypatch, tmp_
         encoding="utf-8",
     )
     monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{(tmp_path / 'cli_make.db').as_posix()}")
     recorded: dict[str, object] = {}
 
@@ -182,20 +183,28 @@ def test_makemigrations_command_passes_model_module_to_alembic(monkeypatch, tmp_
     assert env["DBDUCK_DATABASE_URL"] == f"sqlite:///{(tmp_path / 'cli_make.db').as_posix()}"
     assert env["DBDUCK_MODEL_MODULE"] == "temp_models_make"
     assert env["DBDUCK_MODEL_NAMES"] == "User"
+    assert env["DBDUCK_PROJECT_DIR"] == str(tmp_path.resolve())
+    assert recorded["cwd"] == str(tmp_path.resolve())
+    assert (tmp_path / "migrations" / "sql" / "alembic.ini").exists()
+    assert (tmp_path / "migrations" / "sql" / "env.py").exists()
+    assert (tmp_path / "migrations" / "sql" / "script.py.mako").exists()
+    assert (tmp_path / "migrations" / "sql" / "versions").is_dir()
     assert '"status": "revision_created"' in captured_out.out
 
 
-def test_migrate_command_uses_database_url_env(monkeypatch) -> None:
+def test_migrate_command_uses_database_url_env(monkeypatch, tmp_path) -> None:
     captured: dict[str, object] = {}
 
     class _Completed:
         returncode = 0
 
-    def _fake_run(command, check=False, env=None):
+    def _fake_run(command, check=False, env=None, cwd=None):
         captured["command"] = command
         captured["env"] = env
+        captured["cwd"] = cwd
         return _Completed()
 
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DATABASE_URL", "sqlite:///env_cli_migrate.db")
     monkeypatch.setattr("DBDuck.cli.main.subprocess.run", _fake_run)
     exit_code = app(["migrate", "--direction", "up"])
@@ -203,6 +212,10 @@ def test_migrate_command_uses_database_url_env(monkeypatch) -> None:
     env = captured["env"]
     assert env["DATABASE_URL"] == "sqlite:///env_cli_migrate.db"
     assert env["DBDUCK_DATABASE_URL"] == "sqlite:///env_cli_migrate.db"
+    assert env["DBDUCK_PROJECT_DIR"] == str(tmp_path.resolve())
+    assert captured["cwd"] == str(tmp_path.resolve())
+    assert (tmp_path / "migrations" / "sql" / "alembic.ini").exists()
+    assert (tmp_path / "migrations" / "sql" / "versions").is_dir()
 
 
 def test_ping_command_uses_database_url_env(monkeypatch, capsys, tmp_path) -> None:

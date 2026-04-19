@@ -35,4 +35,5 @@ pytest -q tests/integration
 - Tests are skipped unless their `RUN_*_INTEGRATION=1` flag is set.
 - Use isolated test database and disposable data.
 - SQL tests cover `ping`, CRUD roundtrip, transaction commit/rollback, native pagination, and connection-failure mapping for MySQL, PostgreSQL, and SQL Server.
+- SQL migration tests cover `dbduck makemigrations` + `dbduck migrate --direction up` for SQLite, and for MySQL/PostgreSQL/SQL Server when their integration flags are enabled.
 - Mongo tests cover `ping`, CRUD roundtrip, native pagination, connection-failure mapping, and optional transaction rollback with isolated collection names.

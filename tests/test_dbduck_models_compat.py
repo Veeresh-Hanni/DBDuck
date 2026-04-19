@@ -13,6 +13,10 @@ from DBDuck.models import (
     String,
     UModel,
 )
+from sqlalchemy.dialects import mysql
+from sqlalchemy.schema import CreateTable
+
+from DBDuck.alembic_support import build_metadata_from_models
 
 class Order(UModel):
     class Meta:
@@ -236,3 +240,121 @@ def test_udom_migrate_models_runs_multiple_model_migrations(tmp_path) -> None:
     results = db.migrate_models(User, Team)
     tables = {item["table"] for item in results}
     assert tables == {"users", "teams"}
+
+
+def test_dbduck_models_migrate_adds_non_nullable_column_when_default_exists(tmp_path) -> None:
+    db_file = tmp_path / "dbduck_models_add_defaulted_column.db"
+    db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
+
+    class UserV1(UModel):
+        class Meta:
+            db_table = "users_defaulted"
+
+        id = Column(Integer, primary_key=True)
+        name = Column(String, nullable=False)
+
+    class UserV2(UModel):
+        class Meta:
+            db_table = "users_defaulted"
+
+        id = Column(Integer, primary_key=True)
+        name = Column(String, nullable=False)
+        role = Column(String, nullable=False, default="user")
+
+    UserV1.bind(db)
+    UserV1.create_table()
+    UserV1(id=1, name="Asha").save()
+
+    UserV2.bind(db)
+    migrated = UserV2.migrate()
+    assert migrated["created"] is False
+    assert "role" in migrated["added_columns"]
+
+    fetched_existing = UserV2.find_one(where={"id": 1})
+    assert fetched_existing is not None
+    assert fetched_existing.role == "user"
+
+    UserV2(id=2, name="Mira").save()
+    fetched_new = UserV2.find_one(where={"id": 2})
+    assert fetched_new is not None
+    assert fetched_new.role == "user"
+
+
+def test_alembic_metadata_uses_mysql_safe_varchar_lengths() -> None:
+    class Customer(UModel):
+        class Meta:
+            db_table = "customers_mysql_safe"
+
+        id = Column(Integer, primary_key=True)
+        name = Column(String, nullable=False)
+
+    metadata = build_metadata_from_models([Customer])
+    ddl = str(CreateTable(metadata.tables["customers_mysql_safe"]).compile(dialect=mysql.dialect()))
+    assert "VARCHAR(255)" in ddl
+
+
+def test_dbduck_models_manager_get_or_create_and_update_or_create(tmp_path) -> None:
+    db_file = tmp_path / "dbduck_models_manager.db"
+    db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
+
+    class User(UModel):
+        class Meta:
+            db_table = "users_manager"
+
+        id = Column(Integer, primary_key=True)
+        name = Column(String, nullable=False)
+        role = Column(String, nullable=False, default="user")
+
+    User.bind(db)
+    User.migrate()
+
+    created, was_created = User.objects.get_or_create(id=1, defaults={"name": "Asha"})
+    assert was_created is True
+    assert created.name == "Asha"
+    assert created.role == "user"
+
+    same, was_created = User.objects.get_or_create(id=1, defaults={"name": "Ignored"})
+    assert was_created is False
+    assert same.id == 1
+
+    updated, was_created = User.objects.update_or_create(id=1, defaults={"name": "Mira", "role": "admin"})
+    assert was_created is False
+    assert updated.name == "Mira"
+    assert updated.role == "admin"
+
+    fetched = User.objects.get(id=1)
+    assert fetched.name == "Mira"
+    assert fetched.role == "admin"
+
+
+def test_dbduck_models_save_updates_existing_row_by_primary_key(tmp_path) -> None:
+    db_file = tmp_path / "dbduck_models_save_update.db"
+    db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
+
+    class User(UModel):
+        class Meta:
+            db_table = "users_save_update"
+
+        id = Column(Integer, primary_key=True)
+        name = Column(String, nullable=False)
+        role = Column(String, nullable=False, default="user")
+
+    User.bind(db)
+    User.migrate()
+
+    user = User(id=1, name="Asha")
+    user.save()
+    user.name = "Asha Updated"
+    user.role = "admin"
+    result = user.save()
+
+    assert result["rows_affected"] == 1
+    assert User.objects.count() == 1
+
+    fetched = User.objects.get(id=1)
+    assert fetched.name == "Asha Updated"
+    assert fetched.role == "admin"
+
+    fetched.name = "Asha Final"
+    fetched.refresh_from_db()
+    assert fetched.name == "Asha Updated"

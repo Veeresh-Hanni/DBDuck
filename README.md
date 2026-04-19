@@ -46,6 +46,10 @@ nearest = vector.search_similar("products", vector=[0.1, 0.2, 0.3], top_k=5)
 ## Install
 ```bash
 pip install dbduck
+pip install dbduck[mysql]    # MySQL + PyMySQL
+pip install dbduck[postgres] # PostgreSQL + psycopg2
+pip install dbduck[mssql]    # SQL Server + pyodbc
+pip install dbduck[sql]      # All sync SQL drivers
 pip install dbduck[mongo]    # MongoDB support
 pip install dbduck[async]    # AsyncUDOM
 pip install dbduck[vector]   # Vector DB (Qdrant)
@@ -127,8 +131,8 @@ print(db.find_related("User", id="u1", rel_type="WORKS_AT", target_label="Compan
 | Backend | Type | Status | Install extra |
 | --- | --- | --- | --- |
 | SQLite | SQL | Production-capable | base |
-| MySQL | SQL | Production-capable | base driver required |
-| PostgreSQL | SQL | Production-capable | base driver required |
+| MySQL | SQL | Production-capable | `mysql` or `sql` |
+| PostgreSQL | SQL | Production-capable | `postgres` or `sql` |
 | SQL Server | SQL | Production-capable | `mssql` |
 | MongoDB | NoSQL | Production-capable | `mongo` |
 | Neo4j | Graph | Production-capable | `graph` |
@@ -239,6 +243,10 @@ dbduck version
 ```
 
 For production use, set `DATABASE_URL` or `DBDUCK_DATABASE_URL` and keep the URL out of CLI args.
+`dbduck makemigrations` resolves modules relative to the current working directory by default, so running it from your project root makes `--module models` work for local apps. Use `--project-dir` if your models live elsewhere.
+`dbduck migrate` also runs from the project directory, so a relative SQLite URL like `sqlite:///app.db` creates `app.db` in your app folder, not inside the installed DBDuck package.
+On first use, `dbduck makemigrations` and `dbduck migrate` automatically create a project-local `migrations/sql` workspace if it does not exist yet.
+For MySQL, PostgreSQL, and SQL Server, install the matching driver extra before running CLI migrations.
 
 For SQL backends, `dbduck` can infer the backend from the URL, so `--type` and `--instance` are optional.
 CLI output is quiet by default and colorized for easier scanning in the terminal.
@@ -317,6 +325,14 @@ For production-style SQL schema changes, prefer Alembic via the CLI:
 $env:DATABASE_URL="sqlite:///app.db"
 dbduck makemigrations --module myapp.models --message "add user age"
 dbduck migrate --direction up
+```
+
+For external projects:
+
+```bash
+cd D:\dbduck_production
+$env:DATABASE_URL="sqlite:///app.db"
+dbduck makemigrations --module models --message "init"
 ```
 
 ## Errors

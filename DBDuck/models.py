@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from sqlalchemy import inspect as sa_inspect
+
+from DBDuck.core.exceptions import QueryError
 from DBDuck.udom.models.umodel import UModel as _CoreUModel
 
 
@@ -23,6 +26,10 @@ class _TypeSpec:
 
 class String(_TypeSpec):
     python_type = str
+
+    def __init__(self, length: int | None = 255, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.length = length
 
 
 class Integer(_TypeSpec):
@@ -136,7 +143,62 @@ class _ModelMeta(type):
         if meta is not None and hasattr(meta, "db_table") and "__table__" not in namespace and "__entity__" not in namespace:
             namespace["__table__"] = str(getattr(meta, "db_table"))
 
-        return super().__new__(mcls, name, bases, namespace)
+        cls = super().__new__(mcls, name, bases, namespace)
+        cls.objects = Manager(cls)
+        return cls
+
+
+class Manager:
+    """Small Django-style manager facade over the bound UModel class."""
+
+    def __init__(self, model_cls: type["UModel"]) -> None:
+        self.model_cls = model_cls
+
+    def all(self):
+        return self.model_cls.find()
+
+    def filter(self, **kwargs: Any):
+        return self.model_cls.find(where=kwargs or None)
+
+    def get(self, **kwargs: Any):
+        obj = self.model_cls.find_one(where=kwargs or None)
+        if obj is None:
+            raise QueryError(f"{self.model_cls.__name__} matching query does not exist")
+        return obj
+
+    def create(self, **kwargs: Any):
+        instance = self.model_cls(**kwargs)
+        instance.save()
+        return instance
+
+    def count(self, **kwargs: Any) -> int:
+        return self.model_cls.count(where=kwargs or None)
+
+    def bulk_create(self, objs: list["UModel | dict[str, Any]"]):
+        return self.model_cls.bulk_create(objs)
+
+    def get_or_create(self, defaults: dict[str, Any] | None = None, **lookup: Any):
+        obj = self.model_cls.find_one(where=lookup or None)
+        if obj is not None:
+            return obj, False
+        payload = {**lookup, **(defaults or {})}
+        created = self.model_cls(**payload)
+        created.save()
+        return created, True
+
+    def update_or_create(self, defaults: dict[str, Any] | None = None, **lookup: Any):
+        obj = self.model_cls.find_one(where=lookup or None)
+        if obj is not None:
+            update_payload = dict(defaults or {})
+            if update_payload:
+                obj.update(data=update_payload, where=lookup)
+                for key, value in update_payload.items():
+                    setattr(obj, key, value)
+            return obj, False
+        payload = {**lookup, **(defaults or {})}
+        created = self.model_cls(**payload)
+        created.save()
+        return created, True
 
 
 class UModel(_CoreUModel, metaclass=_ModelMeta):
@@ -153,6 +215,46 @@ class UModel(_CoreUModel, metaclass=_ModelMeta):
             if default is not _UNSET:
                 setattr(self, name, default)
         super().__init__(**kwargs)
+
+    @classmethod
+    def pk_field(cls) -> str | None:
+        return getattr(cls, "__pk_field__", None)
+
+    @property
+    def pk(self) -> Any:
+        field = self.__class__.pk_field()
+        return getattr(self, field) if field and hasattr(self, field) else None
+
+    def save(self, db=None):
+        pk_field = self.__class__.pk_field()
+        resolved = self._resolve_instance_db(db)
+        if pk_field and hasattr(self, pk_field):
+            pk_value = getattr(self, pk_field)
+            if pk_value is not None:
+                engine = getattr(getattr(resolved, "adapter", None), "engine", None)
+                table_exists = False
+                if engine is not None:
+                    try:
+                        table_exists = self.get_name() in set(sa_inspect(engine).get_table_names())
+                    except Exception:
+                        table_exists = False
+                if table_exists:
+                    existing = self.__class__.find_one(where={pk_field: pk_value}, db=resolved)
+                    if existing is not None:
+                        return self.update(data=self.to_dict(), where={pk_field: pk_value}, db=resolved)
+        return super().save(db=resolved)
+
+    def refresh_from_db(self, db=None) -> "UModel":
+        pk_field = self.__class__.pk_field()
+        if not pk_field or not hasattr(self, pk_field):
+            raise QueryError("refresh_from_db requires a primary key field")
+        pk_value = getattr(self, pk_field)
+        fresh = self.__class__.find_one(where={pk_field: pk_value}, db=db)
+        if fresh is None:
+            raise QueryError(f"{self.__class__.__name__} matching query does not exist")
+        for key, value in fresh.to_dict(include_none=True).items():
+            setattr(self, key, value)
+        return self
 
 
 class ForeignKey(Column):

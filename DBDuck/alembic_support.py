@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from importlib import import_module
 from datetime import date, datetime, time
+from importlib import import_module
 from typing import Any, Iterable, get_args
 
+import sqlalchemy as sa
 from sqlalchemy import Boolean as SABoolean
 from sqlalchemy import Column as SAColumn
 from sqlalchemy import DateTime as SADateTime
@@ -16,9 +17,12 @@ from sqlalchemy import JSON as SAJSON
 from sqlalchemy import MetaData
 from sqlalchemy import String as SAString
 from sqlalchemy import Table
+from sqlalchemy import Text as SAText
+from sqlalchemy import text as sa_text
 
 from DBDuck.models import Column as DBDuckColumn
 from DBDuck.models import ForeignKey as DBDuckForeignKey
+from DBDuck.models import _UNSET as DBDuckUnset
 from DBDuck.udom.models.umodel import UModel
 
 
@@ -26,8 +30,29 @@ def _is_model_class(candidate: Any) -> bool:
     return isinstance(candidate, type) and issubclass(candidate, UModel) and candidate is not UModel
 
 
+def apply_sqlalchemy_migration_compat(dialect_name: str) -> None:
+    if (dialect_name or "").lower() != "mysql":
+        return
+    if getattr(sa.String, "__name__", "") == "DBDuckMySQLString":
+        return
+
+    original_string = sa.String
+
+    class DBDuckMySQLString(original_string):
+        def __init__(self, length: int | None = None, *args: Any, **kwargs: Any) -> None:
+            super().__init__(length=255 if length is None else length, *args, **kwargs)
+
+    sa.String = DBDuckMySQLString
+
+
 def load_model_classes(module_name: str, model_names: Iterable[str] | None = None) -> list[type[UModel]]:
-    module = import_module(module_name)
+    try:
+        module = import_module(module_name)
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            f"Failed to import module '{module_name}'. "
+            "Run the command from your project root or pass --project-dir explicitly."
+        ) from exc
     if model_names:
         resolved: list[type[UModel]] = []
         for name in model_names:
@@ -53,13 +78,27 @@ def _optional_inner_type(annotation: Any) -> Any:
     return annotation
 
 
+def _string_length_for(resolved: Any) -> int | None:
+    length = getattr(resolved, "length", None)
+    if length is not None:
+        return int(length)
+    if isinstance(resolved, type):
+        return int(getattr(resolved, "length", 255))
+    return 255
+
+
 def _sa_type_for(annotation: Any) -> Any:
     resolved = _optional_inner_type(annotation)
+    resolved_name = getattr(resolved, "__name__", resolved.__class__.__name__)
+    if resolved_name in {"DateTime", "DateTimeField"}:
+        return SADateTime()
+    if resolved_name in {"Text", "TextField"}:
+        return SAText()
     python_type = getattr(resolved, "python_type", None)
     if python_type is None and isinstance(resolved, type):
         python_type = resolved
     if python_type is str:
-        return SAString()
+        return SAString(length=_string_length_for(resolved))
     if python_type is int:
         return SAInteger()
     if python_type is float:
@@ -70,9 +109,11 @@ def _sa_type_for(annotation: Any) -> Any:
         return SADateTime()
     if python_type in {dict, list, tuple, set}:
         return SAJSON()
-    if resolved in {SAString, SAInteger, SAFloat, SABoolean, SAJSON}:
+    if resolved is SAString:
+        return SAString(length=255)
+    if resolved in {SAInteger, SAFloat, SABoolean, SAJSON}:
         return resolved()
-    return SAString()
+    return SAString(length=255)
 
 
 def _annotation_is_optional(annotation: Any) -> bool:
@@ -89,12 +130,35 @@ def _column_from_annotation(name: str, annotation: Any) -> SAColumn:
     return SAColumn(name, _sa_type_for(resolved), **kwargs)
 
 
+def _server_default_for(value: Any, type_spec: Any = None):
+    if value is DBDuckUnset or callable(value):
+        return None
+    if value is None:
+        return None
+    type_name = getattr(type_spec, "__name__", type_spec.__class__.__name__) if type_spec is not None else ""
+    if type_name in {"DateTime", "DateTimeField"}:
+        if isinstance(value, str) and not value.strip():
+            return None
+        if isinstance(value, str) and value.strip().upper() == "CURRENT_TIMESTAMP":
+            return sa_text("CURRENT_TIMESTAMP")
+        return None
+    if isinstance(value, bool):
+        return sa_text("1" if value else "0")
+    if isinstance(value, (int, float)):
+        return sa_text(str(value))
+    text_value = str(value).replace("'", "''")
+    return sa_text(f"'{text_value}'")
+
+
 def _column_from_descriptor(name: str, descriptor: DBDuckColumn) -> SAColumn:
     kwargs: dict[str, Any] = {
         "nullable": bool(descriptor.nullable),
         "primary_key": bool(descriptor.primary_key),
         "unique": bool(descriptor.unique),
     }
+    server_default = _server_default_for(getattr(descriptor, "default", DBDuckUnset), descriptor.type_)
+    if server_default is not None:
+        kwargs["server_default"] = server_default
     if isinstance(descriptor, DBDuckForeignKey):
         target = descriptor.to.get_name()
         kwargs["nullable"] = bool(descriptor.nullable)

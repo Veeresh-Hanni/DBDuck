@@ -1,0 +1,1 @@
+"""SQL migration baseline templates bundled with DBDuck."""

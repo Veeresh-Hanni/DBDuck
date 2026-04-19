@@ -7,6 +7,10 @@ import types
 from datetime import date, datetime, time
 from typing import Any, Mapping, TypeVar, Union, get_args, get_origin, get_type_hints
 
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import text
+from sqlalchemy.schema import CreateColumn
+
 from ...core import SensitiveFieldProtector
 from ...core.exceptions import QueryError
 
@@ -23,6 +27,7 @@ class UModel:
     __strict__ = True
     __indexes__: list[Mapping[str, Any]] = []
     __sensitive_fields__: list[str] | tuple[str, ...] | None = None
+    __schema_migrations_table__ = "dbduck_schema_migrations"
 
     def __init__(self, **kwargs: Any) -> None:
         for key, value in kwargs.items():
@@ -307,6 +312,88 @@ class UModel:
         raise QueryError("Bound UDOM instance does not support ensure_indexes")
 
     @classmethod
+    def create_table(cls, db=None) -> dict[str, Any]:
+        resolved = cls._resolve_db(db)
+        cls._require_sql_backend(resolved)
+        engine = cls._engine_for(resolved)
+        cls._ensure_schema_history_table(engine)
+        table = cls._declared_table()
+        inspector = sa_inspect(engine)
+        exists = table.name in inspector.get_table_names()
+        if not exists:
+            table.create(bind=engine, checkfirst=True)
+            cls._record_schema_migration(engine, operation="create_table", details={"table": table.name})
+        return {"table": table.name, "created": not exists}
+
+    @classmethod
+    def migrate(cls, db=None) -> dict[str, Any]:
+        resolved = cls._resolve_db(db)
+        cls._require_sql_backend(resolved)
+        engine = cls._engine_for(resolved)
+        cls._ensure_schema_history_table(engine)
+        table = cls._declared_table()
+        inspector = sa_inspect(engine)
+        if table.name not in set(inspector.get_table_names()):
+            cls.create_table(db=resolved)
+            return {"table": table.name, "created": True, "added_columns": [], "warnings": []}
+
+        existing_columns = {str(col["name"]) for col in inspector.get_columns(table.name)}
+        added_columns: list[str] = []
+        warnings: list[str] = []
+        for column in table.columns:
+            if column.name in existing_columns:
+                continue
+            if column.primary_key or column.unique:
+                warnings.append(
+                    f"Skipped column '{column.name}': adding primary_key/unique columns automatically is unsafe"
+                )
+                continue
+            if not column.nullable and column.server_default is None:
+                warnings.append(f"Skipped column '{column.name}': adding non-nullable columns automatically is unsafe")
+                continue
+            cls._add_column(engine, table.name, column)
+            added_columns.append(column.name)
+            cls._record_schema_migration(
+                engine,
+                operation="add_column",
+                details={"table": table.name, "column": column.name},
+            )
+        if added_columns:
+            cls._invalidate_sql_table_cache(resolved, table.name)
+        return {"table": table.name, "created": False, "added_columns": added_columns, "warnings": warnings}
+
+    @classmethod
+    def ensure_schema(cls, db=None) -> dict[str, Any]:
+        return cls.migrate(db=db)
+
+    @classmethod
+    def migration_history(cls, db=None) -> list[dict[str, Any]]:
+        resolved = cls._resolve_db(db)
+        cls._require_sql_backend(resolved)
+        engine = cls._engine_for(resolved)
+        cls._ensure_schema_history_table(engine)
+        sql = text(
+            f"""
+            SELECT model_name, table_name, operation, details, applied_at
+            FROM {cls.__schema_migrations_table__}
+            WHERE table_name = :table_name
+            ORDER BY id ASC
+            """
+        )
+        with engine.begin() as conn:
+            rows = conn.execute(sql, {"table_name": cls.get_name()}).mappings().all()
+        history: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            if isinstance(item.get("details"), str) and item["details"]:
+                try:
+                    item["details"] = json.loads(item["details"])
+                except json.JSONDecodeError:
+                    pass
+            history.append(item)
+        return history
+
+    @classmethod
     def _coerce_value(cls, field: str, value: Any, expected_type: Any) -> Any:
         if expected_type is Any:
             return value
@@ -497,6 +584,118 @@ class UModel:
         if args:
             return type(None) in args
         return False
+
+    @classmethod
+    def _require_sql_backend(cls, resolved) -> None:
+        if getattr(resolved, "db_type", None) != "sql":
+            raise QueryError("Model schema migrations are currently supported for SQL backends only")
+
+    @classmethod
+    def _engine_for(cls, resolved):
+        engine = getattr(getattr(resolved, "adapter", None), "engine", None)
+        if engine is None:
+            raise QueryError("Bound SQL backend does not expose a SQLAlchemy engine")
+        return engine
+
+    @classmethod
+    def _declared_table(cls):
+        from ...alembic_support import build_metadata_from_models
+
+        metadata = build_metadata_from_models([cls])
+        return metadata.tables[cls.get_name()]
+
+    @classmethod
+    def _ensure_schema_history_table(cls, engine) -> None:
+        dialect = engine.dialect.name.lower()
+        table_name = cls.__schema_migrations_table__
+        create_sql_by_dialect = {
+            "sqlite": f"""
+                CREATE TABLE IF NOT EXISTS {table_name} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    model_name VARCHAR(255) NOT NULL,
+                    table_name VARCHAR(255) NOT NULL,
+                    operation VARCHAR(64) NOT NULL,
+                    details TEXT,
+                    applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """,
+            "mysql": f"""
+                CREATE TABLE IF NOT EXISTS {table_name} (
+                    id INTEGER PRIMARY KEY AUTO_INCREMENT,
+                    model_name VARCHAR(255) NOT NULL,
+                    table_name VARCHAR(255) NOT NULL,
+                    operation VARCHAR(64) NOT NULL,
+                    details TEXT,
+                    applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """,
+            "postgresql": f"""
+                CREATE TABLE IF NOT EXISTS {table_name} (
+                    id SERIAL PRIMARY KEY,
+                    model_name VARCHAR(255) NOT NULL,
+                    table_name VARCHAR(255) NOT NULL,
+                    operation VARCHAR(64) NOT NULL,
+                    details TEXT,
+                    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """,
+            "mssql": f"""
+                IF OBJECT_ID(N'{table_name}', N'U') IS NULL
+                CREATE TABLE {table_name} (
+                    id INT IDENTITY(1,1) PRIMARY KEY,
+                    model_name NVARCHAR(255) NOT NULL,
+                    table_name NVARCHAR(255) NOT NULL,
+                    operation NVARCHAR(64) NOT NULL,
+                    details NVARCHAR(MAX) NULL,
+                    applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """,
+        }
+        sql = create_sql_by_dialect.get(dialect, create_sql_by_dialect["sqlite"])
+        with engine.begin() as conn:
+            conn.execute(text(sql))
+
+    @classmethod
+    def _record_schema_migration(cls, engine, *, operation: str, details: Mapping[str, Any]) -> None:
+        sql = text(
+            f"""
+            INSERT INTO {cls.__schema_migrations_table__} (model_name, table_name, operation, details)
+            VALUES (:model_name, :table_name, :operation, :details)
+            """
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                sql,
+                {
+                    "model_name": cls.__name__,
+                    "table_name": cls.get_name(),
+                    "operation": operation,
+                    "details": json.dumps(dict(details), default=str),
+                },
+            )
+
+    @classmethod
+    def _add_column(cls, engine, table_name: str, column) -> None:
+        preparer = engine.dialect.identifier_preparer
+        quoted_table = preparer.quote(table_name)
+        compiled = str(CreateColumn(column).compile(dialect=engine.dialect))
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {quoted_table} ADD {compiled}"))
+
+    @classmethod
+    def _invalidate_sql_table_cache(cls, resolved, table_name: str) -> None:
+        adapter = getattr(resolved, "adapter", None)
+        table_cache = getattr(adapter, "_table_cache", None)
+        if isinstance(table_cache, dict):
+            table_cache.pop(table_name, None)
+        column_cache = getattr(adapter, "_column_type_cache", None)
+        if isinstance(column_cache, dict):
+            column_cache.pop(table_name, None)
+        metadata = getattr(adapter, "_metadata", None)
+        if metadata is not None and hasattr(metadata, "tables"):
+            table = metadata.tables.get(table_name)
+            if table is not None:
+                metadata.remove(table)
 
 
 from typing import Generic

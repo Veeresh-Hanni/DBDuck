@@ -42,6 +42,9 @@ Documentation = "https://dbduck.org.in"
 dbduck = "DBDuck.cli.main:app"
 
 [project.optional-dependencies]
+mysql = ["pymysql>=1.1"]
+postgres = ["psycopg2-binary>=2.9"]
+sql = ["pymysql>=1.1", "psycopg2-binary>=2.9", "pyodbc>=4.0"]
 mongo = ["pymongo>=4.0", "motor>=3.0"]
 async = ["asyncpg>=0.29", "aiomysql>=0.2", "aiosqlite>=0.19", "motor>=3.0"]
 vector = ["qdrant-client>=1.7"]
@@ -57,6 +60,8 @@ dev = [
   "ruff"
 ]
 all = [
+  "pymysql>=1.1",
+  "psycopg2-binary>=2.9",
   "pymongo>=4.0",
   "motor>=3.0",
   "asyncpg>=0.29",
@@ -80,6 +85,9 @@ include-package-data = true
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["DBDuck*"]
+
+[tool.setuptools.package-data]
+"DBDuck.migrations.sql" = ["README.md", "env.py", "script.py.mako"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

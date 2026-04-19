@@ -1,0 +1,1 @@
+"""Bundled migration templates for DBDuck."""
