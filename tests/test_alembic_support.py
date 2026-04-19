@@ -88,5 +88,28 @@ def test_showcase_order_model_compiles_without_backend_specific_datetime_default
     mssql_ddl = str(CreateTable(metadata.tables["orders"]).compile(dialect=mssql.dialect()))
 
     assert "created_at DATETIME NOT NULL DEFAULT ''" not in mysql_ddl
+    assert "paid BOOL NOT NULL DEFAULT false" in mysql_ddl
     assert "CREATE TABLE" in postgres_ddl
+    assert "paid BOOLEAN DEFAULT false NOT NULL" in postgres_ddl
     assert "CREATE TABLE" in mssql_ddl
+    assert "paid BIT NOT NULL DEFAULT 0" in mssql_ddl
+
+
+def test_boolean_defaults_compile_portably_for_postgres_and_mysql() -> None:
+    class FlaggedOrder(UModel):
+        class Meta:
+            db_table = "flagged_orders"
+
+        id = Column(Integer, primary_key=True)
+        paid = Column(sa.Boolean, nullable=False, default=False)
+        active = Column(sa.Boolean, nullable=False, default=True)
+
+    metadata = build_metadata_from_models([FlaggedOrder])
+    postgres_ddl = str(CreateTable(metadata.tables["flagged_orders"]).compile(dialect=postgresql.dialect()))
+    mysql_ddl = str(CreateTable(metadata.tables["flagged_orders"]).compile(dialect=mysql.dialect()))
+
+    assert "BOOLEAN DEFAULT 0" not in postgres_ddl.upper()
+    assert "BOOL DEFAULT 0" not in postgres_ddl.upper()
+    assert "DEFAULT false".upper() in postgres_ddl.upper()
+    assert "DEFAULT true".upper() in postgres_ddl.upper()
+    assert "CREATE TABLE" in mysql_ddl

@@ -143,7 +143,7 @@ def _server_default_for(value: Any, type_spec: Any = None):
             return sa_text("CURRENT_TIMESTAMP")
         return None
     if isinstance(value, bool):
-        return sa_text("1" if value else "0")
+        return sa.true() if value else sa.false()
     if isinstance(value, (int, float)):
         return sa_text(str(value))
     text_value = str(value).replace("'", "''")

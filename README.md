@@ -247,6 +247,7 @@ For production use, set `DATABASE_URL` or `DBDUCK_DATABASE_URL` and keep the URL
 `dbduck migrate` also runs from the project directory, so a relative SQLite URL like `sqlite:///app.db` creates `app.db` in your app folder, not inside the installed DBDuck package.
 On first use, `dbduck makemigrations` and `dbduck migrate` automatically create a project-local `migrations/sql` workspace if it does not exist yet.
 For MySQL, PostgreSQL, and SQL Server, install the matching driver extra before running CLI migrations.
+If you switch an app from one SQL backend to another, regenerate the app's `migrations/sql` folder before running migrations on the new backend.
 
 For SQL backends, `dbduck` can infer the backend from the URL, so `--type` and `--instance` are optional.
 CLI output is quiet by default and colorized for easier scanning in the terminal.
