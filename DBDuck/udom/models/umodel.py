@@ -529,6 +529,18 @@ class UModel:
         for key, value in payload.items():
             normalized[key] = cls._serialize_for_db(value, db_type)
         return normalized
+    
+    @classmethod
+    def _protect_sensitive_fields(cls, payload: Mapping[str, Any], resolved_db: Any) -> dict[str, Any]:
+        settings = getattr(resolved_db, "settings", None)
+        enabled = bool(getattr(settings, "hash_sensitive_fields", True))
+        rounds = int(getattr(settings, "bcrypt_rounds", 12))
+        return SensitiveFieldProtector.protect_mapping(
+            payload,
+            enabled=enabled,
+            rounds=rounds,
+            field_names=cls.get_sensitive_fields(),
+        )
 
     @classmethod
     def _serialize_for_db(cls, value: Any, db_type: str) -> Any:
