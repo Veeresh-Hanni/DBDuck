@@ -1,5 +1,27 @@
 ﻿# Changelog
 
+## v0.4.0 - 2026-05-15
+
+### Added
+- **UModel-driven Alembic migrations**: `dbduck makemigrations` auto-generates schema diffs from UModel classes.
+  - `dbduck makemigrations --module myapp.models --message "add user age"` creates Alembic revisions from your models.
+  - `dbduck migrate --direction up` / `dbduck migrate --direction down` applies or rolls back migrations.
+- **Project-scoped migration workspace**: auto-scaffolds `migrations/sql/` with `env.py`, `alembic.ini`, and `versions/`.
+- `--project-dir` flag for running migrations from any working directory.
+- `--model` flag to limit autogeneration to specific model classes.
+- `DATABASE_URL` / `DBDUCK_DATABASE_URL` environment variable support for connection strings.
+- **Alembic support module**: converts UModel Column descriptors to SQLAlchemy MetaData for autogenerate.
+- **ForeignKey support in migrations**: resolves UModel ForeignKey to SQLAlchemy ForeignKey constraints.
+- **Server defaults**: maps UModel column defaults to Alembic `server_default` expressions.
+
+### Changed
+- **MySQL compatibility layer**: auto-applies `String(255)` defaults for MySQL backends.
+
+### Fixed
+- Added friendlier error diagnostics with human-readable hints for common migration failures.
+
+**Full Changelog**: https://github.com/Veeresh-Hanni/DBDuck/compare/v0.3.0...v0.4.0
+
 ## v0.3.0 - 2026-03-28
 
 ### Added
