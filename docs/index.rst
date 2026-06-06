@@ -9,13 +9,14 @@ Universal Data Object Model in Python for SQL, Nosql, Graph, Vector DBMS
    :caption: Getting Started
 
    initialize
+   installation
    production_readiness
 
 .. toctree::
    :maxdepth: 2
    :caption: API Reference
 
-   modules
+   api_reference
 
 Indices and tables
 ==================
