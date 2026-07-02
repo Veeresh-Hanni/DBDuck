@@ -91,6 +91,10 @@ class UModel:
         else:
             data = dict(self.__dict__)
 
+        loaded_fields = getattr(self, "_udom_loaded_fields", None)
+        if loaded_fields is not None:
+            data = {key: value for key, value in data.items() if key in loaded_fields}
+
         if not include_sensitive:
             sensitive = set(getattr(self.__class__, "__sensitive_fields__", []) or [])
             data = {k: v for k, v in data.items() if k not in sensitive}
@@ -101,23 +105,41 @@ class UModel:
 
 
     @classmethod
-    def from_dict(cls: type[TModel], payload: Mapping[str, Any]) -> TModel:
-        """Build a model instance from a mapping payload."""
+    def from_dict(cls: type[TModel], payload: Mapping[str, Any], *, partial: bool = False) -> TModel:
+        """Build a model instance from a mapping payload.
+
+        ``partial`` is intended for projected query results, where fields not
+        present in the payload were deliberately omitted by ``select()``.
+        """
         if not isinstance(payload, Mapping):
             raise QueryError("from_dict payload must be a mapping")
         model = cls(**dict(payload))
+        if partial:
+            # Declarative model constructors may populate defaults for columns
+            # that were not selected. Preserve the projection boundary when
+            # the model is later serialized with to_dict().
+            model._udom_loaded_fields = frozenset(payload)
         if model.__strict__:
-            model.validate()
+            model.validate(only_fields=set(payload) if partial else None)
         return model
 
-    def validate(self) -> None:
-        """Basic model validation from declared fields."""
+    def validate(self, *, only_fields: set[str] | None = None) -> None:
+        """Basic model validation from declared fields.
+
+        Args:
+            only_fields: If provided, only these fields are validated as
+                required (used when the instance was hydrated from a
+                partial/projected row via .select()). If None, all
+                declared fields are validated as normal.
+        """
         fields = self.get_fields()
         if not fields:
             if not self.__dict__:
                 raise QueryError("Model has no declared fields and no payload values")
             return
         for field, expected_type in fields.items():
+            if only_fields is not None and field not in only_fields:
+                continue  # field wasn't selected/requested — skip required check
             if not hasattr(self, field):
                 if self._is_optional_type(expected_type):
                     setattr(self, field, None)
@@ -165,7 +187,7 @@ class UModel:
         """Insert model payload via bound UDOM backend."""
         self.validate()
         resolved = self._resolve_instance_db(db)
-        payload = self._prepare_payload_for_db(self.to_dict(), getattr(resolved, "db_type", "sql"))
+        payload = self._prepare_payload_for_db(self.to_dict(include_sensitive=True), getattr(resolved, "db_type", "sql"))
         if hasattr(resolved, "_create_internal"):
             return resolved._create_internal(self.get_name(), payload, sensitive_fields=self.get_sensitive_fields())
         payload = self._protect_sensitive_fields(payload, resolved)
@@ -174,7 +196,7 @@ class UModel:
     def update(self, data: Mapping[str, Any] | None = None, where: Mapping[str, Any] | str | None = None, db=None):
         """Update records for this model."""
         resolved = self._resolve_instance_db(db)
-        payload = dict(data) if data is not None else self.to_dict()
+        payload = dict(data) if data is not None else self.to_dict(include_sensitive=True)
         if where is None:
             inferred = {k: getattr(self, k) for k in ("id", "_id") if hasattr(self, k)}
             if not inferred:
@@ -305,9 +327,9 @@ class UModel:
         for row in rows:
             if isinstance(row, UModel):
                 row.validate()
-                payloads.append(row.to_dict())
+                payloads.append(row.to_dict(include_sensitive=True))
             elif isinstance(row, Mapping):
-                payloads.append(cls.from_dict(dict(row)).to_dict())
+                payloads.append(cls.from_dict(dict(row)).to_dict(include_sensitive=True))
             else:
                 raise QueryError("bulk_create expects UModel instances or mappings")
         if not payloads:
@@ -849,17 +871,21 @@ class ModelQueryBuilder(Generic[TModel]):
     # Terminal Methods - return model instances
     # ─────────────────────────────────────────────────────────────────────────
 
+    def _hydrate(self, row: Mapping[str, Any]) -> TModel:
+        """Hydrate a full or projected row using the appropriate validation."""
+        return self._model_cls.from_dict(row, partial=bool(self._builder._select_fields))
+
     def find(self) -> list[TModel]:
         """Execute query and return list of model instances."""
         rows = self._builder.find()
-        return [self._model_cls.from_dict(row) for row in rows if isinstance(row, Mapping)]
+        return [self._hydrate(row) for row in rows if isinstance(row, Mapping)]
 
     def first(self) -> TModel | None:
         """Execute query and return first model instance or None."""
         row = self._builder.first()
         if row is None:
             return None
-        return self._model_cls.from_dict(row) if isinstance(row, Mapping) else None
+        return self._hydrate(row) if isinstance(row, Mapping) else None
 
     def count(self) -> int:
         """Return count of matching records."""
@@ -890,7 +916,7 @@ class ModelQueryBuilder(Generic[TModel]):
         """Execute paginated query with model instances."""
         result = self._builder.find_page(page=page, page_size=page_size)
         result["items"] = [
-            self._model_cls.from_dict(item) for item in result.get("items", []) if isinstance(item, Mapping)
+            self._hydrate(item) for item in result.get("items", []) if isinstance(item, Mapping)
         ]
         return result
 
