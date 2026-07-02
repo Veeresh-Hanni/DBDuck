@@ -70,16 +70,35 @@ class UModel:
                 return value.strip()
         return cls.__name__
 
-    def to_dict(self, *, include_none: bool = False, only_declared: bool = True) -> dict[str, Any]:
-        """Serialize model values to dictionary payload."""
+
+    def to_dict(
+            self,
+            *,
+            include_none: bool = False,
+            only_declared: bool = True,
+            include_sensitive: bool = False,
+        ) -> dict[str, Any]:
+        """Serialize model values to dictionary payload.
+
+        Args:
+            include_sensitive: If False (default), fields listed in
+                __sensitive_fields__ (e.g. password) are excluded from
+                the output. Set True only for trusted internal use.
+        """
         if only_declared:
             names = self.get_fields().keys()
             data = {name: getattr(self, name) for name in names if hasattr(self, name)}
         else:
             data = dict(self.__dict__)
+
+        if not include_sensitive:
+            sensitive = set(getattr(self.__class__, "__sensitive_fields__", []) or [])
+            data = {k: v for k, v in data.items() if k not in sensitive}
+
         if not include_none:
             data = {k: v for k, v in data.items() if v is not None}
         return data
+
 
     @classmethod
     def from_dict(cls: type[TModel], payload: Mapping[str, Any]) -> TModel:
