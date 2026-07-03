@@ -5,6 +5,8 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/Veeresh-Hanni/DBDuck/ci.yml?branch=main)](https://github.com/Veeresh-Hanni/DBDuck/actions)
 [![License](https://img.shields.io/github/license/Veeresh-Hanni/DBDuck)](LICENSE)
 
+Current release: **0.4.1**
+
 <p align="center">
   <img src="docs/assets/dbduck-logo.png" alt="DBDuck Logo" bg="black" />
 </p>
@@ -162,7 +164,7 @@ Full docs live in the codebase docstrings and examples.
 
 ## Query Builder DSL
 
-DBDuck 0.3.0 introduces a fluent Query Builder API for constructing queries with method chaining:
+DBDuck 0.4.1 includes a fluent Query Builder API for constructing queries with method chaining:
 
 ```python
 from DBDuck import UDOM
@@ -357,7 +359,7 @@ dbduck makemigrations --module models --message "init"
 - Per-caller rate limiting support.
 
 ## Roadmap
-DBDuck 0.2.0 delivers the hardened SQL core, Mongo support, Neo4j graph support, Qdrant vector support, AsyncUDOM, and the CLI.
+DBDuck 0.4.1 delivers the hardened SQL core, Mongo support, Neo4j graph support, Qdrant vector support, AsyncUDOM, the CLI, and UModel-driven Alembic migrations.
 Next up: deeper vector backends, richer schema migration workflows, Redis and DynamoDB adapters, and first-class observability hooks.
 
 ## Contributing

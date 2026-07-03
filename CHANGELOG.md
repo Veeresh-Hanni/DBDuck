@@ -1,5 +1,16 @@
 ﻿# Changelog
 
+## v0.4.1 - 2026-07-03
+
+### Fixed
+- Enabled Alembic batch alter mode for SQLite migrations so unsupported `ALTER TABLE` operations rebuild the table safely and preserve existing rows.
+- Preserved UModel query projections when selected models are serialized with `to_dict()`.
+
+### Changed
+- Updated the package documentation for the `0.4.1` minor release.
+
+**Full Changelog**: https://github.com/Veeresh-Hanni/DBDuck/compare/v0.4.0...v0.4.1
+
 ## v0.4.0 - 2026-05-15
 
 ### Added
@@ -93,4 +104,3 @@ User.query().where(id=1).first()                      # User | None
 - Bumped package version to `0.2.0`.
 - Added PyPI publish workflow and `dbduck` console script.
 - Added optional extras for MongoDB, async backends, vector support, graph support, and SQL Server support.
-

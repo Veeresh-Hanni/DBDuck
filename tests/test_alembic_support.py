@@ -5,7 +5,11 @@ from sqlalchemy.schema import CreateTable
 
 import sqlalchemy as sa
 
-from DBDuck.alembic_support import apply_sqlalchemy_migration_compat, build_metadata_from_models
+from DBDuck.alembic_support import (
+    apply_sqlalchemy_migration_compat,
+    build_metadata_from_models,
+    migration_context_options,
+)
 from DBDuck.models import Column, DateTimeField, ForeignKey, Integer, String, TextField, UModel
 from examples.full_stack_dbduck_app.models import ALL_MODELS as SHOWCASE_MODELS
 
@@ -66,6 +70,11 @@ def test_mysql_migration_compat_adds_default_length_for_historical_sa_string() -
         assert sa.String(64).length == 64
     finally:
         sa.String = original_string
+
+
+def test_sqlite_migrations_enable_batch_alter_mode() -> None:
+    assert migration_context_options("sqlite") == {"compare_type": True, "render_as_batch": True}
+    assert migration_context_options("postgresql") == {"compare_type": True, "render_as_batch": False}
 
 
 def test_datetime_field_empty_string_default_is_not_emitted_as_mysql_server_default() -> None:

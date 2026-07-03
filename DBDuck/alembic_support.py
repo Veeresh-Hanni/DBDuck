@@ -45,6 +45,17 @@ def apply_sqlalchemy_migration_compat(dialect_name: str) -> None:
     sa.String = DBDuckMySQLString
 
 
+def migration_context_options(dialect_name: str) -> dict[str, bool]:
+    """Return Alembic options required by the selected SQL dialect."""
+    normalized = (dialect_name or "").lower()
+    return {
+        "compare_type": True,
+        # SQLite cannot perform many ALTER TABLE operations directly.
+        # Batch mode recreates the table and copies its existing rows.
+        "render_as_batch": normalized == "sqlite",
+    }
+
+
 def load_model_classes(module_name: str, model_names: Iterable[str] | None = None) -> list[type[UModel]]:
     try:
         module = import_module(module_name)

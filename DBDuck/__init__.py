@@ -33,7 +33,7 @@ from .models import (
 try:
     __version__ = version("DBDuck")
 except PackageNotFoundError:
-    __version__ = "0.3.0"
+    __version__ = "0.4.1"
 
 __all__ = [
     "UDOM",

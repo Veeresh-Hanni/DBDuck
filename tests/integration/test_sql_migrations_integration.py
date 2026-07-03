@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.schema import MetaData, Table
 
 from DBDuck.cli.main import app
@@ -128,3 +128,61 @@ def test_sql_backend_migration_flow_creates_project_local_workspace_and_tables(
             engine.dispose()
     finally:
         _cleanup_tables(url, table_names)
+
+
+def test_sqlite_batch_alter_preserves_existing_rows(tmp_path: Path, monkeypatch) -> None:
+    project_dir = tmp_path / "project_sqlite_alter"
+    project_dir.mkdir()
+    table_name = unique_entity("it_sqlite_profiles")
+    models_file = project_dir / "models.py"
+
+    def write_model(*, nullable: bool) -> None:
+        models_file.write_text(
+            "\n".join(
+                [
+                    "from DBDuck.models import Column, Integer, String, UModel",
+                    "",
+                    "class Profile(UModel):",
+                    "    class Meta:",
+                    f"        db_table = {table_name!r}",
+                    "",
+                    "    id = Column(Integer, primary_key=True)",
+                    f"    name = Column(String, nullable={nullable!r})",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+    url = f"sqlite:///{(project_dir / 'migration_sqlite_alter.db').as_posix()}"
+    monkeypatch.chdir(project_dir)
+    monkeypatch.setenv("DATABASE_URL", url)
+    write_model(nullable=True)
+
+    assert app(["makemigrations", "--module", "models", "--message", "create profiles"]) == 0
+    assert app(["migrate", "--direction", "up"]) == 0
+
+    engine = create_engine(url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(f'INSERT INTO "{table_name}" (id, name) VALUES (:id, :name)'),
+                {"id": 1, "name": "Ganesh"},
+            )
+
+        write_model(nullable=False)
+        assert app(["makemigrations", "--module", "models", "--message", "require profile name"]) == 0
+        revision_files = list((project_dir / "migrations" / "sql" / "versions").glob("*.py"))
+        alter_revision = next(
+            path for path in revision_files if "require profile name" in path.read_text(encoding="utf-8")
+        )
+        assert "batch_alter_table" in alter_revision.read_text(encoding="utf-8")
+        assert app(["migrate", "--direction", "up"]) == 0
+
+        with engine.connect() as connection:
+            rows = connection.execute(text(f'SELECT id, name FROM "{table_name}"')).mappings().all()
+        assert [dict(row) for row in rows] == [{"id": 1, "name": "Ganesh"}]
+        name_column = next(column for column in inspect(engine).get_columns(table_name) if column["name"] == "name")
+        assert name_column["nullable"] is False
+    finally:
+        engine.dispose()

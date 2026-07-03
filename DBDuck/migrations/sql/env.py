@@ -7,8 +7,14 @@ from pathlib import Path
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy.engine import make_url
 
-from DBDuck.alembic_support import apply_sqlalchemy_migration_compat, build_metadata_from_models, load_model_classes
+from DBDuck.alembic_support import (
+    apply_sqlalchemy_migration_compat,
+    build_metadata_from_models,
+    load_model_classes,
+    migration_context_options,
+)
 
 config = context.config
 
@@ -49,11 +55,12 @@ def _database_url() -> str:
 
 
 def run_migrations_offline() -> None:
+    url = _database_url()
     context.configure(
-        url=_database_url(),
+        url=url,
         target_metadata=target_metadata,
         literal_binds=True,
-        compare_type=True,
+        **migration_context_options(make_url(url).get_backend_name()),
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -69,7 +76,11 @@ def run_migrations_online() -> None:
     )
     with connectable.connect() as connection:
         apply_sqlalchemy_migration_compat(connection.dialect.name)
-        context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            **migration_context_options(connection.dialect.name),
+        )
         with context.begin_transaction():
             context.run_migrations()
 

@@ -9,7 +9,8 @@
 project = 'DBDuck'
 copyright = '2026, Veeresh Hanni'
 author = 'Veeresh Hanni'
-release = '0.1.0'
+version = '0.4.1'
+release = '0.4.1'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -30,6 +31,8 @@ language = 'en'
 
 html_theme = 'alabaster'
 html_static_path = ['_static']
+html_css_files = ['custom.css']
+html_title = f'DBDuck {release} documentation'
 
 # -- Options for autodoc ---------------------------------------------------
 autodoc_default_options = {

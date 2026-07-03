@@ -2,7 +2,9 @@
 DBDuck
 ========
 
-Universal Data Object Model in Python for SQL, Nosql, Graph, Vector DBMS
+One Python API for SQL, MongoDB, Neo4j, Qdrant, and asynchronous data workflows.
+
+This documentation describes DBDuck **0.4.1**.
 
 .. toctree::
    :maxdepth: 2
@@ -10,6 +12,8 @@ Universal Data Object Model in Python for SQL, Nosql, Graph, Vector DBMS
 
    initialize
    installation
+   query_builder
+   migrations
    production_readiness
 
 .. toctree::

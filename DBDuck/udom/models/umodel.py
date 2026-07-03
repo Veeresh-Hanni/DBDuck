@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import types
 from datetime import date, datetime, time
 from typing import Any, Mapping, TypeVar, Union, get_args, get_origin, get_type_hints
@@ -413,13 +414,10 @@ class UModel:
         cls._require_sql_backend(resolved)
         engine = cls._engine_for(resolved)
         cls._ensure_schema_history_table(engine)
+        _, quoted_history_table = cls._schema_history_table_identifier(engine)
         sql = text(
-            f"""
-            SELECT model_name, table_name, operation, details, applied_at
-            FROM {cls.__schema_migrations_table__}
-            WHERE table_name = :table_name
-            ORDER BY id ASC
-            """
+            f"SELECT model_name, table_name, operation, details, applied_at "  # nosec B608
+            f"FROM {quoted_history_table} WHERE table_name = :table_name ORDER BY id ASC"
         )
         with engine.begin() as conn:
             rows = conn.execute(sql, {"table_name": cls.get_name()}).mappings().all()
@@ -658,12 +656,19 @@ class UModel:
         return metadata.tables[cls.get_name()]
 
     @classmethod
+    def _schema_history_table_identifier(cls, engine) -> tuple[str, str]:
+        table_name = str(cls.__schema_migrations_table__)
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table_name):
+            raise QueryError("Invalid schema migrations table name")
+        return table_name, engine.dialect.identifier_preparer.quote(table_name)
+
+    @classmethod
     def _ensure_schema_history_table(cls, engine) -> None:
         dialect = engine.dialect.name.lower()
-        table_name = cls.__schema_migrations_table__
+        table_name, quoted_table_name = cls._schema_history_table_identifier(engine)
         create_sql_by_dialect = {
             "sqlite": f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
+                CREATE TABLE IF NOT EXISTS {quoted_table_name} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     model_name VARCHAR(255) NOT NULL,
                     table_name VARCHAR(255) NOT NULL,
@@ -673,7 +678,7 @@ class UModel:
                 )
             """,
             "mysql": f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
+                CREATE TABLE IF NOT EXISTS {quoted_table_name} (
                     id INTEGER PRIMARY KEY AUTO_INCREMENT,
                     model_name VARCHAR(255) NOT NULL,
                     table_name VARCHAR(255) NOT NULL,
@@ -683,7 +688,7 @@ class UModel:
                 )
             """,
             "postgresql": f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
+                CREATE TABLE IF NOT EXISTS {quoted_table_name} (
                     id SERIAL PRIMARY KEY,
                     model_name VARCHAR(255) NOT NULL,
                     table_name VARCHAR(255) NOT NULL,
@@ -694,7 +699,7 @@ class UModel:
             """,
             "mssql": f"""
                 IF OBJECT_ID(N'{table_name}', N'U') IS NULL
-                CREATE TABLE {table_name} (
+                CREATE TABLE {quoted_table_name} (
                     id INT IDENTITY(1,1) PRIMARY KEY,
                     model_name NVARCHAR(255) NOT NULL,
                     table_name NVARCHAR(255) NOT NULL,
@@ -710,11 +715,11 @@ class UModel:
 
     @classmethod
     def _record_schema_migration(cls, engine, *, operation: str, details: Mapping[str, Any]) -> None:
+        _, quoted_history_table = cls._schema_history_table_identifier(engine)
         sql = text(
-            f"""
-            INSERT INTO {cls.__schema_migrations_table__} (model_name, table_name, operation, details)
-            VALUES (:model_name, :table_name, :operation, :details)
-            """
+            f"INSERT INTO {quoted_history_table} "  # nosec B608
+            "(model_name, table_name, operation, details) "
+            "VALUES (:model_name, :table_name, :operation, :details)"
         )
         with engine.begin() as conn:
             conn.execute(
