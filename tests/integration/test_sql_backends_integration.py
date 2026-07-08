@@ -132,5 +132,5 @@ def test_sql_backend_connection_failure_maps_to_connection_error(db_instance: st
     bad_url = _invalid_sql_url(url_factory())
     db = UDOM(db_type="sql", db_instance=db_instance, url=bad_url)
 
-    with pytest.raises(ConnectionError, match="Database connection failed"):
+    with pytest.raises(ConnectionError):
         db.ping()

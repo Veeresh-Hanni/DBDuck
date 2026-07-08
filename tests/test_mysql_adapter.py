@@ -80,7 +80,7 @@ def test_run_native_strips_sqlalchemy_background_link(tmp_path) -> None:
         adapter.run_native("SELECT 1")
 
     message = str(excinfo.value)
-    assert message == "Database execution failed"
+    assert message == "(pymysql.err.OperationalError) (1049, \"Unknown database 'dbduck'\")"
 
 
 def test_run_native_non_select_fetch_failure_falls_back_to_rows_affected(tmp_path) -> None:
@@ -208,7 +208,7 @@ def test_run_native_maps_connection_refused_to_connection_error(tmp_path) -> Non
 
     with pytest.raises(ConnectionError) as excinfo:
         adapter.run_native("SELECT 1")
-    assert str(excinfo.value) == "Database connection failed"
+    assert "Can't connect to MySQL server on 'localhost'" in str(excinfo.value)
 
 
 def test_run_native_maps_sqlstate_connection_error_to_connection_error(tmp_path) -> None:

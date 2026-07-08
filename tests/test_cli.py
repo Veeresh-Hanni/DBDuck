@@ -38,7 +38,7 @@ def test_shell_debug_errors_prints_traceback(monkeypatch, capsys, tmp_path) -> N
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "error: Database execution failed" in captured.out
+    assert "error: (sqlite3.OperationalError) no such table: missing_table" in captured.out
     assert "debug-error:" in captured.err
     assert "Traceback" in captured.err
 

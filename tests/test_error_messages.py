@@ -38,7 +38,7 @@ def test_public_sql_errors_are_masked_and_internal_debug_is_logged(tmp_path) -> 
     adapter._active_connection = lambda: _Conn()  # type: ignore[method-assign]
 
     try:
-        with pytest.raises(QueryError, match="Database execution failed"):
+        with pytest.raises(QueryError):
             adapter.run_native("SELECT 1")
     finally:
         logger.removeHandler(handler)

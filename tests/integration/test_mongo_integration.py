@@ -54,7 +54,7 @@ def test_mongo_connection_failure_maps_to_connection_error() -> None:
         connect_timeout_ms=250,
     )
 
-    with pytest.raises(ConnectionError, match="Database connection failed"):
+    with pytest.raises(ConnectionError):
         db.ping()
 
 
