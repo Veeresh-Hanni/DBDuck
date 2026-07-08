@@ -368,6 +368,12 @@ class UModel:
         return {"table": table.name, "created": not exists}
 
     @classmethod
+    def _add_index(cls, engine, index) -> None:
+        from sqlalchemy.schema import CreateIndex
+        with engine.begin() as conn:
+            conn.execute(CreateIndex(index))
+
+    @classmethod
     def migrate(cls, db=None) -> dict[str, Any]:
         resolved = cls._resolve_db(db)
         cls._require_sql_backend(resolved)
@@ -377,7 +383,7 @@ class UModel:
         inspector = sa_inspect(engine)
         if table.name not in set(inspector.get_table_names()):
             cls.create_table(db=resolved)
-            return {"table": table.name, "created": True, "added_columns": [], "warnings": []}
+            return {"table": table.name, "created": True, "added_columns": [], "added_indexes": [], "warnings": []}
 
         existing_columns = {str(col["name"]) for col in inspector.get_columns(table.name)}
         added_columns: list[str] = []
@@ -400,9 +406,35 @@ class UModel:
                 operation="add_column",
                 details={"table": table.name, "column": column.name},
             )
-        if added_columns:
+
+        # NEW: diff and create missing indexes
+        existing_index_names = {str(idx["name"]) for idx in inspector.get_indexes(table.name)}
+        added_indexes: list[str] = []
+        for index in table.indexes:
+            if index.name in existing_index_names:
+                continue
+            # Skip if it depends on a column we just skipped (unsafe to add)
+            index_columns = {col.name for col in index.columns}
+            if not index_columns.issubset(existing_columns | set(added_columns)):
+                warnings.append(f"Skipped index '{index.name}': references a column not present on the table")
+                continue
+            cls._add_index(engine, index)
+            added_indexes.append(index.name)
+            cls._record_schema_migration(
+                engine,
+                operation="add_index",
+                details={"table": table.name, "index": index.name},
+            )
+
+        if added_columns or added_indexes:
             cls._invalidate_sql_table_cache(resolved, table.name)
-        return {"table": table.name, "created": False, "added_columns": added_columns, "warnings": warnings}
+        return {
+            "table": table.name,
+            "created": False,
+            "added_columns": added_columns,
+            "added_indexes": added_indexes,
+            "warnings": warnings,
+            }
 
     @classmethod
     def ensure_schema(cls, db=None) -> dict[str, Any]:

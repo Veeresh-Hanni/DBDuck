@@ -199,5 +199,13 @@ def build_metadata_from_models(model_classes: Iterable[type[UModel]]) -> MetaDat
                     continue
                 sa_columns.append(_column_from_annotation(field_name, annotation))
 
-        Table(table_name, metadata, *sa_columns)
+        table = Table(table_name, metadata, *sa_columns)
+
+        # NEW: build indexes from __indexes__
+        index_specs = getattr(model_cls, "__indexes__", []) or []
+        for idx, spec in enumerate(index_specs):
+            columns = spec if isinstance(spec, (tuple, list)) else (spec,)
+            index_name = f"ix_{table_name}_" + "_".join(columns)
+            sa.Index(index_name, *[table.c[col] for col in columns])
+
     return metadata
