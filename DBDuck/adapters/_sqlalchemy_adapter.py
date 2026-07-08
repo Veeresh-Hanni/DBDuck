@@ -33,8 +33,8 @@ class SQLAlchemyAdapter(BaseAdapter):
     _SQLALCHEMY_URL_RE = re.compile(r"\s*https?://sqlalche\.me/[^\s\)]*\s*", re.IGNORECASE)
     _CONNECTION_ERROR_CODES = {2002, 2003, 2006, 2013}
     _AGG_FUNC_RE = re.compile(r"^\s*(count|sum|avg|min|max)\s*\(\s*(\*|[A-Za-z_][A-Za-z0-9_]*)\s*\)\s*$", re.IGNORECASE)
-    # _PUBLIC_QUERY_ERROR = "Database execution failed"
-    # _PUBLIC_CONNECTION_ERROR = "Database connection failed"
+    _PUBLIC_QUERY_ERROR = "Database execution failed"
+    _PUBLIC_CONNECTION_ERROR = "Database connection failed"
 
     def __init__(self, url: str, **options: Any) -> None:
         self.url = url
@@ -440,7 +440,7 @@ class SQLAlchemyAdapter(BaseAdapter):
             if self._is_connection_error(exc):
                 raise ConnectionError(message) from exc
             raise QueryError(message) from exc
-        except SQLAlchemyError as exc:
+        except Exception as exc:
             log_event(self._logger, 40, "Query failed", event="query.error", db=self.DIALECT)
             log_internal_debug(
                 self._logger,
@@ -449,10 +449,10 @@ class SQLAlchemyAdapter(BaseAdapter):
                 db=self.DIALECT,
                 exc=exc,
             )
-            message = self._clean_error_message(exc)
-            if self._is_connection_error(exc):
-                raise ConnectionError(message) from exc
-            raise QueryError(message) from exc
+            if self._is_connection_like_exception(exc):
+                raise ConnectionError(self._PUBLIC_CONNECTION_ERROR) from exc
+            raise QueryError(self._PUBLIC_QUERY_ERROR) from exc
+
         finally:
             if result is not None:
                 try:

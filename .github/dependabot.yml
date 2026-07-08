@@ -12,12 +12,3 @@ updates:
       day: "sunday"
       time: "09:00"
       timezone: "Asia/Kolkata"
-
-  - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "sunday"
-      time: "09:00"
-      timezone: "Asia/Kolkata"
-      
