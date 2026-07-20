@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from DBDuck import UDOM, QueryBuilder
+from DBDuck.core.exceptions import QueryError
 
 
 @pytest.fixture
@@ -458,6 +459,50 @@ class TestQueryBuilderJoins:
             .count()
         )
         assert total == 2
+
+    def test_join_aggregate_counts_joined_rows(self, db):
+        """aggregate() supports counting columns from joined tables."""
+        rows = (
+            db.table("users")
+            .group_by("name")
+            .left_join("orders", on=("id", "user_id"))
+            .metrics(total="count(orders.id)")
+            .order_by("name ASC")
+            .aggregate()
+        )
+        assert rows == [
+            {"name": "Alice", "total": 2},
+            {"name": "Bob", "total": 1},
+            {"name": "Charlie", "total": 0},
+            {"name": "Diana", "total": 0},
+        ]
+
+    def test_join_aggregate_mapping_metric_and_alias_order(self, db):
+        """joined aggregate supports mapping metrics and ordering by metric alias."""
+        rows = (
+            db.table("users")
+            .group_by("name")
+            .left_join("orders", on=("id", "user_id"))
+            .metrics(total={"op": "count", "field": "orders.id"})
+            .order_by("total DESC")
+            .limit(2)
+            .aggregate()
+        )
+        assert rows == [
+            {"name": "Alice", "total": 2},
+            {"name": "Bob", "total": 1},
+        ]
+
+    def test_join_aggregate_rejects_empty_group_by(self, db):
+        """joined aggregate rejects empty group_by fields like non-join aggregate."""
+        with pytest.raises(QueryError, match="group_by contains an empty field"):
+            (
+                db.table("users")
+                .group_by("")
+                .left_join("orders", on=("id", "user_id"))
+                .metrics(total="count(orders.id)")
+                .aggregate()
+            )
 
     def test_join_first(self, db):
         """first() works on joined queries."""

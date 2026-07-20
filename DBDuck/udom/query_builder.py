@@ -12,6 +12,7 @@ Example usage:
 from __future__ import annotations
 
 from collections import Counter
+import re
 from typing import TYPE_CHECKING, Any, Mapping
 
 from ..core.exceptions import QueryError
@@ -717,6 +718,112 @@ class QueryBuilder:
             return 0
         return int(rows[0].get("total", 0))
 
+    @staticmethod
+    def _normalize_join_aggregate_fields(fields: str | list[str] | tuple[str, ...] | None) -> list[str]:
+        if fields is None:
+            return []
+        if isinstance(fields, str):
+            raw_fields = [fields.strip()]
+        elif isinstance(fields, (list, tuple)):
+            raw_fields = [str(field).strip() for field in fields]
+        else:
+            raise QueryError("group_by must be a string, list, tuple, or None")
+        if any(not field for field in raw_fields):
+            raise QueryError("group_by contains an empty field")
+        return raw_fields
+
+    def _normalize_join_aggregate_metric(self, alias: str, metric: Any, table_map: Mapping[str, Any]):
+        adapter = self._udom.adapter
+        alias_name = adapter._validate_identifier(alias)
+        if isinstance(metric, str):
+            match = re.fullmatch(
+                r"\s*(count|sum|avg|min|max)\s*\(\s*(\*|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*\)\s*",
+                metric,
+                re.IGNORECASE,
+            )
+            if not match:
+                raise QueryError("Invalid aggregate metric format; expected e.g. count(*), sum(field)")
+            op = match.group(1).upper()
+            field = match.group(2)
+        elif isinstance(metric, Mapping):
+            op = str(metric.get("op", "")).strip().upper()
+            field = str(metric.get("field", "*")).strip()
+            if not op:
+                raise QueryError(f"Aggregate metric '{alias_name}' requires op")
+            if op not in {"COUNT", "SUM", "AVG", "MIN", "MAX"}:
+                raise QueryError(f"Unsupported aggregate op: {op}")
+            if not re.fullmatch(r"\*|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?", field):
+                raise QueryError(f"Invalid aggregate field: {field!r}")
+        else:
+            raise QueryError("metrics values must be strings like 'count(*)' or mappings")
+        if field == "*" and op != "COUNT":
+            raise QueryError(f"{op}(*) is not supported; use COUNT(*) or specify a field")
+        from sqlalchemy import func
+
+        aggregate_map = {"COUNT": func.count, "SUM": func.sum, "AVG": func.avg, "MIN": func.min, "MAX": func.max}
+        builder = aggregate_map[op]
+        if field == "*":
+            expression = builder()
+        else:
+            _, _, column = self._resolve_field_reference(table_map, field)
+            expression = builder(column)
+        return expression.label(alias_name)
+
+    def _aggregate_with_joins(self, metrics: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+        adapter = self._require_sql_joins()
+        if adapter is None:
+            return []
+        from sqlalchemy import and_, bindparam, select
+
+        from_clause, table_map = self._build_joined_from_clause()
+        group_fields = self._normalize_join_aggregate_fields(self._group_by_fields)
+        group_columns = [self._resolve_field_reference(table_map, field)[2] for field in group_fields]
+        final_metrics = metrics or self._metrics or {}
+        metric_aliases = {}
+        select_parts = list(group_columns)
+        for alias, metric in final_metrics.items():
+            metric_expr = self._normalize_join_aggregate_metric(alias, metric, table_map)
+            metric_aliases[alias] = metric_expr
+            select_parts.append(metric_expr)
+        if not select_parts:
+            raise QueryError("aggregate requires at least one group_by field or metric")
+        where_expr, params = self._build_join_where_expression(table_map, self._build_where())
+        stmt = select(*select_parts).select_from(from_clause)
+        if where_expr is not None:
+            stmt = stmt.where(where_expr)
+        if group_columns:
+            stmt = stmt.group_by(*group_columns)
+        if isinstance(self._having_conditions, Mapping):
+            having_conditions = []
+            for idx, (key, value) in enumerate(self._having_conditions.items()):
+                key_text = str(key)
+                pname = f"h_{idx}"
+                if key_text in metric_aliases:
+                    having_conditions.append(metric_aliases[key_text] == bindparam(pname))
+                    params[pname] = value
+                else:
+                    _, entity_field, column = self._resolve_field_reference(table_map, key_text)
+                    entity_name = key_text.split(".", 1)[0] if "." in key_text else self._entity
+                    having_conditions.append(column == bindparam(pname))
+                    params[pname] = adapter._normalize_value_for_column(entity_name, entity_field, value)
+            if having_conditions:
+                stmt = stmt.having(and_(*having_conditions))
+        elif self._having_conditions:
+            raise QueryError("string having clauses are not supported for joined aggregate queries; use a mapping")
+        order_clause = None
+        if self._order_by:
+            field, direction = self._udom.adapter._parse_order_by_components(self._order_by)
+            if field in metric_aliases:
+                order_clause = metric_aliases[field].asc() if direction == "ASC" else metric_aliases[field].desc()
+            else:
+                order_clause = self._parse_join_order(table_map)
+        if order_clause is not None:
+            stmt = stmt.order_by(order_clause)
+        if self._limit_value is not None:
+            stmt = stmt.limit(self._limit_value)
+        rows = adapter.run_native(stmt, params=params)
+        return rows if isinstance(rows, list) else []
+
     # ─────────────────────────────────────────────────────────────────────────
     # Terminal Methods (execute the query)
     # ─────────────────────────────────────────────────────────────────────────
@@ -889,6 +996,9 @@ class QueryBuilder:
         Example:
             db.table("orders").group_by("status").metrics(total="count").aggregate()
         """
+        if self._joins:
+            return self._aggregate_with_joins(metrics=metrics)
+
         final_metrics = metrics or self._metrics
         return self._udom.aggregate(
             self._entity,
