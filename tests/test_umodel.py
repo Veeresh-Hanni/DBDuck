@@ -39,6 +39,14 @@ class CalendarEvent(UModel):
     reminder_at: time | None
 
 
+class Movie(UModel):
+    __entity__ = "movies_attr_query"
+    id: int
+    title: str
+    rating: int
+    active: bool
+
+
 def test_umodel_sql_save_find_and_find_one(tmp_path) -> None:
     db_file = tmp_path / "umodel_sql.db"
     db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
@@ -51,6 +59,85 @@ def test_umodel_sql_save_find_and_find_one(tmp_path) -> None:
     one = Order.find_one(where={"order_id": 1})
     assert one is not None
     assert one.customer == "A"
+
+
+def test_umodel_query_accepts_annotation_field_attributes(tmp_path) -> None:
+    db_file = tmp_path / "umodel_attr_query.db"
+    db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
+    Movie.bind(db)
+    Movie.bulk_create(
+        [
+            Movie(id=1, title="Alpha", rating=8, active=True),
+            Movie(id=2, title="Beta", rating=7, active=True),
+            Movie(id=3, title="Gamma", rating=5, active=False),
+        ]
+    )
+
+    selected = (
+        Movie.query()
+        .where({Movie.active: True})
+        .where_gte(Movie.rating, 7)
+        .where_not(Movie.title, "Gamma")
+        .where_in(Movie.id, [1, 2])
+        .select(Movie.title, Movie.rating)
+        .order_by(-Movie.rating)
+        .find()
+    )
+    assert [movie.title for movie in selected] == ["Alpha", "Beta"]
+
+    grouped = (
+        Movie.query()
+        .where({Movie.active: True})
+        .group_by(Movie.title)
+        .metrics(total="count(*)")
+        .having("total >= 1")
+        .order_by(Movie.title)
+        .aggregate()
+    )
+    assert grouped == [{"title": "Alpha", "total": 1}, {"title": "Beta", "total": 1}]
+
+
+def test_umodel_query_exposes_model_attributes_from_bound_builder(tmp_path) -> None:
+    db_file = tmp_path / "umodel_bound_builder_attrs.db"
+    db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
+    Movie.bind(db)
+    Movie.bulk_create(
+        [
+            Movie(id=1, title="Alpha", rating=8, active=True),
+            Movie(id=2, title="Beta", rating=7, active=True),
+        ]
+    )
+
+    q = Movie.query()
+    rows = q.group_by(q.title).metrics(total="count(*)").having("total >= 1").order_by(q.title).aggregate()
+
+    assert rows == [{"title": "Alpha", "total": 1}, {"title": "Beta", "total": 1}]
+
+
+def test_umodel_query_join_accepts_relation_column_strings(tmp_path) -> None:
+    db_file = tmp_path / "umodel_join_relation_columns.db"
+    db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
+
+    class User(UModel):
+        __entity__ = "Users"
+        id: int
+        name: str
+
+    User.bind(db)
+    db.create_many("Users", [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}])
+    db.create_many(
+        "Orders",
+        [
+            {"id": 1, "user_id": 1},
+            {"id": 2, "user_id": 1},
+            {"id": 3, "user_id": 2},
+        ],
+    )
+
+    rows = User.query().join("Orders", on=("id", "user_id")).select("name", "Orders.id").order_by("-Orders.id").find()
+
+    assert [row["Orders.id"] for row in rows] == [3, 2, 1]
+    assert rows[0].to_dict() == {"Orders.id": 3, "name": "B"}
 
 
 def test_umodel_sql_bulk_create(tmp_path) -> None:

@@ -20,7 +20,7 @@ from DBDuck.alembic_support import build_metadata_from_models
 
 class Order(UModel):
     class Meta:
-        db_table = "orders_django_style"
+        db_table = "orders"
 
     order_id = Column(Integer, primary_key=True)
     customer = Column(String, nullable=False)
@@ -29,7 +29,7 @@ class Order(UModel):
 
 class Customer(UModel):
     class Meta:
-        db_table = "customers_django_style"
+        db_table = "customers"
 
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
@@ -37,7 +37,7 @@ class Customer(UModel):
 
 class Invoice(UModel):
     class Meta:
-        db_table = "invoices_django_style"
+        db_table = "invoices"
 
     id = Column(Integer, primary_key=True)
     customer_id = ForeignKey(Customer)
@@ -47,7 +47,7 @@ class Invoice(UModel):
 
 class Profile(UModel):
     class Meta:
-        db_table = "profiles_django_style"
+        db_table = "profiles"
 
     id = Column(Integer, primary_key=True)
     customer_id = ForeignKey(Customer)
@@ -56,7 +56,7 @@ class Profile(UModel):
 
 class Tag(UModel):
     class Meta:
-        db_table = "tags_django_style"
+        db_table = "tags"
 
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
@@ -64,7 +64,7 @@ class Tag(UModel):
 
 class InvoiceTag(UModel):
     class Meta:
-        db_table = "invoice_tags_django_style"
+        db_table = "invoice_tags"
 
     id = Column(Integer, primary_key=True)
     invoice_id = Column(Integer, nullable=False)
@@ -98,6 +98,30 @@ def test_dbduck_models_django_style_sqlite_crud(tmp_path) -> None:
 
     deleted = fetched.delete(where={"order_id": 1})
     assert deleted["rows_affected"] == 1
+
+
+def test_dbduck_models_query_accepts_column_attributes(tmp_path) -> None:
+    db_file = tmp_path / "dbduck_models_attr_query.db"
+    db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
+    Order.bind(db)
+    Order.bulk_create(
+        [
+            Order(order_id=1, customer="Alice", paid=True),
+            Order(order_id=2, customer="Bob", paid=True),
+            Order(order_id=3, customer="Cara", paid=False),
+        ]
+    )
+
+    rows = (
+        Order.query()
+        .where({Order.paid: True})
+        .where_in(Order.order_id, [1, 2])
+        .select(Order.customer, Order.order_id)
+        .order_by(-Order.order_id)
+        .find()
+    )
+
+    assert [row.customer for row in rows] == ["Bob", "Alice"]
 
 
 def test_dbduck_models_foreign_key_accepts_model_instance(tmp_path) -> None:

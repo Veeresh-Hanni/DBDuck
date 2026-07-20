@@ -17,15 +17,15 @@ SQL backends:
 ```bash
 # MySQL
 $env:RUN_MYSQL_INTEGRATION="1"
-$env:MYSQL_TEST_URL="mysql+pymysql://root:password@localhost:3306/udom_test"
+$env:MYSQL_TEST_URL="mysql+pymysql://username:pass@localhost:3306/udom_test"
 
 # PostgreSQL
 $env:RUN_POSTGRES_INTEGRATION="1"
-$env:POSTGRES_TEST_URL="postgresql+psycopg2://postgres:password@localhost:5432/udom_test"
+$env:POSTGRES_TEST_URL="postgresql+psycopg2://username:pass@localhost:5432/udom_test"
 
 # SQL Server
 $env:RUN_MSSQL_INTEGRATION="1"
-$env:MSSQL_TEST_URL="mssql+pyodbc://sa:Password!123@localhost:1433/udom_test?driver=ODBC+Driver+17+for+SQL+Server"
+$env:MSSQL_TEST_URL="mssql+pyodbc://username:pass@localhost:1433/udom_test?driver=ODBC+Driver+17+for+SQL+Server"
 
 pytest -q tests/integration
 ```

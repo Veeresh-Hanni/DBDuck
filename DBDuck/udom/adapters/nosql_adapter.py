@@ -18,7 +18,6 @@ class NoSQLAdapter(BaseAdapter):
         r"(?:--|/\*|\*/|;|\$[a-zA-Z]|\b(where|drop|truncate|union|exec|eval|function)\b)",
         re.IGNORECASE,
     )
-    _PUBLIC_QUERY_ERROR = "Database execution failed"
     _PUBLIC_CONNECTION_ERROR = "Database connection failed"
 
     def __init__(self, db_instance="mongodb", url="mongodb://localhost:27017/udom", **options):
@@ -137,7 +136,7 @@ class NoSQLAdapter(BaseAdapter):
             self._log_error("query.error", "Mongo operation failed", exc)
             if self._is_transient_mongo_error(exc):
                 raise ConnectionError(self._PUBLIC_CONNECTION_ERROR) from exc
-            raise QueryError(self._PUBLIC_QUERY_ERROR) from exc
+            raise QueryError(str(exc) or exc.__class__.__name__) from exc
 
     def convert_uql(self, uql_query: str):
         """Convert basic UQL commands to Mongo-style operation dictionaries."""
@@ -368,11 +367,11 @@ class NoSQLAdapter(BaseAdapter):
 
     def _parse_order_by(self, order_by: str):
         text = order_by.strip()
-        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)(?:\s+(ASC|DESC))?", text, flags=re.IGNORECASE)
+        match = re.fullmatch(r"(-?)([A-Za-z_][A-Za-z0-9_]*)(?:\s+(ASC|DESC))?", text, flags=re.IGNORECASE)
         if not match:
             raise QueryError("Invalid order_by clause")
-        field = match.group(1)
-        direction = (match.group(2) or "ASC").upper()
+        descending_prefix, field = match.group(1), match.group(2)
+        direction = (match.group(3) or ("DESC" if descending_prefix else "ASC")).upper()
         return [(field, 1 if direction == "ASC" else -1)]
 
     def _normalize_group_fields(self, group_by: str | list[str] | tuple[str, ...] | None) -> list[str]:

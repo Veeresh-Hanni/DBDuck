@@ -23,8 +23,8 @@ def test_sqlalchemy_reference_url_is_removed_from_error_message() -> None:
     assert "Unknown database 'dbduck'" in message
 
 
-def test_public_sql_errors_are_masked_and_internal_debug_is_logged(tmp_path) -> None:
-    adapter = SQLiteAdapter(url=f"sqlite:///{(tmp_path / 'masked_errors.db').as_posix()}", log_level="DEBUG")
+def test_public_sql_errors_include_driver_message_and_internal_debug_is_logged(tmp_path) -> None:
+    adapter = SQLiteAdapter(url=f"sqlite:///{(tmp_path / 'driver_errors.db').as_posix()}", log_level="DEBUG")
     logger = get_logger("DEBUG")
     stream = StringIO()
     handler = logging.StreamHandler(stream)
@@ -38,7 +38,7 @@ def test_public_sql_errors_are_masked_and_internal_debug_is_logged(tmp_path) -> 
     adapter._active_connection = lambda: _Conn()  # type: ignore[method-assign]
 
     try:
-        with pytest.raises(QueryError):
+        with pytest.raises(QueryError, match="driver exploded"):
             adapter.run_native("SELECT 1")
     finally:
         logger.removeHandler(handler)

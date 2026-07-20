@@ -43,14 +43,14 @@ MySQL
 
 .. code-block:: python
 
-    db = UDOM(db_type="sql", db_instance="mysql", url="mysql+pymysql://root:password@localhost:3306/udom")
+    db = UDOM(db_type="sql", db_instance="mysql", url="mysql+pymysql://username:pass@localhost:3306/udom")
 
 PostgreSQL
 ----------
 
 .. code-block:: python
 
-    db = UDOM(db_type="sql", db_instance="postgres", url="postgresql+psycopg2://postgres:password@localhost:5432/postgres")
+    db = UDOM(db_type="sql", db_instance="postgres", url="postgresql+psycopg2://username:pass@localhost:5432/postgres")
 
 Supported SQL Engines
 ---------------------

@@ -119,7 +119,7 @@ def run_mysql_example():
     
     try:
         # Connect to MySQL (adjust credentials as needed)
-        db = UDOM(url="mysql+pymysql://root:Veeru123@localhost:3306/dbduck_test")
+        db = UDOM(url="mysql+pymysql://username:pass@localhost:3306/dbduck_test")
         db.ping()
     except Exception as e:
         print(f"MySQL not available: {e}")
@@ -181,7 +181,7 @@ def run_postgresql_example():
     
     try:
         # Connect to PostgreSQL (adjust credentials as needed)
-        db = UDOM(url="postgresql+psycopg2://postgres:Veeru123@localhost:5432/dbduck_test")
+        db = UDOM(url="postgresql+psycopg2://username:pass@localhost:5432/dbduck_test")
         db.ping()
     except Exception as e:
         print(f"PostgreSQL not available: {e}")
@@ -248,14 +248,14 @@ def run_mssql_example():
     print("=" * 60)
     odbc_str = (
         "DRIVER={ODBC Driver 17 for SQL Server};"
-        "SERVER=VEERESH-HANNI\MSSQLLEARNDB"
+        "SERVER=localhost"
         "DATABASE=dbduck_test;"
-        "UID=sa;"
-        "PWD=Veeru2006;"
+        "UID=username;"
+        "PWD=pass;"
         "TrustServerCertificate=yes;"
     )
     url = f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_str)}"
-    # url = "mssql+pyodbc://sa:Veeru2006@localhost:1433/dbduck_test?driver=ODBC+Driver+17+for+SQL+Server"
+    # url = "mssql+pyodbc://username:pass@localhost:1433/dbduck_test?driver=ODBC+Driver+17+for+SQL+Server"
     try:
         # Connect to SQL Server (adjust connection string as needed)
         

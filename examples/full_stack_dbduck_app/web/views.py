@@ -328,7 +328,7 @@ HOME_HTML = """
         </div>
         <div class="summary-block">
           <span>Demo admin</span>
-          <strong>admin@dbduck.app / admin123</strong>
+          <strong>admin@dbduck.app / password</strong>
         </div>
       </aside>
     </section>

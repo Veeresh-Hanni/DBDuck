@@ -122,3 +122,19 @@ def test_boolean_defaults_compile_portably_for_postgres_and_mysql() -> None:
     assert "DEFAULT false".upper() in postgres_ddl.upper()
     assert "DEFAULT true".upper() in postgres_ddl.upper()
     assert "CREATE TABLE" in mysql_ddl
+
+
+def test_alembic_metadata_accepts_mongo_style_index_specs() -> None:
+    class IndexedEvent(UModel):
+        __entity__ = "indexed_events"
+        __indexes__ = [
+            {"fields": [{"name": "account_id"}, {"name": "created_at", "order": "desc"}]},
+        ]
+
+        account_id: int
+        created_at: str
+
+    metadata = build_metadata_from_models([IndexedEvent])
+    indexes = {index.name: [column.name for column in index.columns] for index in metadata.tables["indexed_events"].indexes}
+
+    assert indexes == {"ix_indexed_events_account_id_created_at": ["account_id", "created_at"]}

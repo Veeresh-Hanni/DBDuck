@@ -21,7 +21,7 @@ def get_int_env(name: str, default: int) -> int:
 
 
 def get_jwt_secret() -> str:
-    return get_env("APP_JWT_SECRET", "dbduck-demo-change-me")
+    return get_env("APP_JWT_SECRET", "dummy-secret-change-me")
 
 
 def get_payment_gateway_key_id() -> str:

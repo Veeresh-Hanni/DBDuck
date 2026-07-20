@@ -15,7 +15,7 @@ from ..services.identity import normalize_email
 
 def build_db() -> UDOM:
     return UDOM(
-        url=get_env("APP_DB_URL", "postgresql+psycopg2://postgres:Veeru123@localhost:5432/fullstack_dbduck_app"),
+        url=get_env("APP_DB_URL", "postgresql+psycopg2://username:pass@localhost:5432/fullstack_dbduck_app"),
         log_level=get_env("APP_LOG_LEVEL", "ERROR"),
     )
 
@@ -138,7 +138,7 @@ def seed_demo_data() -> None:
                 id=admin_id,
                 name="DBDuck Admin",
                 email="admin@dbduck.app",
-                password="admin123",
+                password="password",
                 active=True,
                 role="admin",
             ).save()
@@ -146,13 +146,13 @@ def seed_demo_data() -> None:
         return
 
     with Customer._udom.transaction():
-        Customer(id=1, name="Asha", email="asha@example.com", password="secret123", active=True, role="customer").save()
+        Customer(id=1, name="Asha", email="asha@example.com", password="password", active=True, role="customer").save()
         Profile(id=1, customer_id=1, bio="Loves clean APIs and SQLite demos").save()
 
-        Customer(id=2, name="Ishan", email="ishan@example.com", password="secret123", active=True, role="customer").save()
+        Customer(id=2, name="Ishan", email="ishan@example.com", password="password", active=True, role="customer").save()
         Profile(id=2, customer_id=2, bio="Builds internal tools with FastAPI").save()
 
-        Customer(id=3, name="DBDuck Admin", email="admin@dbduck.app", password="admin123", active=True, role="admin").save()
+        Customer(id=3, name="DBDuck Admin", email="admin@dbduck.app", password="password", active=True, role="admin").save()
         Profile(id=3, customer_id=3, bio="Admin account for the showcase app").save()
 
         Product(id=1, name="DBDuck Mug", price=299.0, active=True).save()

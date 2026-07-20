@@ -1,4 +1,4 @@
-﻿# DBDuck Initialization Guide
+# DBDuck Initialization Guide
 
 This guide is for the current production-focused stage of DBDuck with SQL and NoSQL support.
 
@@ -35,13 +35,13 @@ print(db.find("Product", where={"active": True}))
 ### MySQL
 
 ```python
-db = UDOM(db_type="sql", db_instance="mysql", url="mysql+pymysql://root:password@localhost:3306/udom")
+db = UDOM(db_type="sql", db_instance="mysql", url="mysql+pymysql://username:pass@localhost:3306/udom")
 ```
 
 ### PostgreSQL
 
 ```python
-db = UDOM(db_type="sql", db_instance="postgres", url="postgresql+psycopg2://postgres:password@localhost:5432/postgres")
+db = UDOM(db_type="sql", db_instance="postgres", url="postgresql+psycopg2://username:pass@localhost:5432/postgres")
 ```
 
 ### Supported SQL engines in current workspace

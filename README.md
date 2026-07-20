@@ -1,11 +1,11 @@
-﻿# DBDuck — One API for every database
+# DBDuck — One API for every database
 
 [![PyPI version](https://img.shields.io/pypi/v/dbduck.svg)](https://pypi.org/project/dbduck/)
 [![Python versions](https://img.shields.io/pypi/pyversions/dbduck.svg)](https://pypi.org/project/dbduck/)
 [![CI](https://img.shields.io/github/actions/workflow/status/Veeresh-Hanni/DBDuck/ci.yml?branch=main)](https://github.com/Veeresh-Hanni/DBDuck/actions)
 [![License](https://img.shields.io/github/license/Veeresh-Hanni/DBDuck)](LICENSE)
 
-Current release: **0.4.1**
+Current release: **0.4.4**
 
 <p align="center">
   <img src="docs/assets/dbduck-logo.png" alt="DBDuck Logo" bg="black" />
@@ -87,7 +87,7 @@ import asyncio
 from DBDuck.udom.async_udom import AsyncUDOM
 
 async def main():
-    db = AsyncUDOM(url="postgresql+psycopg2://postgres:pass@localhost:5432/app")
+    db = AsyncUDOM(url="postgresql+psycopg2://username:pass@localhost:5432/app")
     await db.create("users", {"id": 1, "name": "Ishan", "active": True})
     print(await db.find("users", where={"active": True}))
     await db.close()
@@ -119,8 +119,8 @@ print(db.find_related("User", id="u1", rel_type="WORKS_AT", target_label="Compan
 ## Developer-friendly setup
 - For SQL backends, DBDuck can infer the backend directly from the URL:
   - `UDOM(url="sqlite:///app.db")`
-  - `UDOM(url="mysql+pymysql://root:pass@localhost:3306/app")`
-  - `UDOM(url="postgresql+psycopg2://postgres:pass@localhost:5432/app")`
+  - `UDOM(url="mysql+pymysql://username:pass@localhost:3306/app")`
+  - `UDOM(url="postgresql+psycopg2://username:pass@localhost:5432/app")`
   - `UDOM(url="mssql+pyodbc:///?odbc_connect=...")`
 - Explicit configuration still works if you prefer it:
   - `UDOM(db_type="sql", db_instance="postgres", url="...")`
@@ -164,7 +164,7 @@ Full docs live in the codebase docstrings and examples.
 
 ## Query Builder DSL
 
-DBDuck 0.4.1 includes a fluent Query Builder API for constructing queries with method chaining:
+DBDuck includes a fluent Query Builder API for constructing queries with method chaining:
 
 ```python
 from DBDuck import UDOM
@@ -175,6 +175,10 @@ db = UDOM(url="sqlite:///app.db")
 users = db.table("users").where(active=True).order("name").limit(10).find()
 user = db.table("users").where(id=1).first()
 count = db.table("users").where(role="admin").count()
+
+# Ordering: plain field is ASC, -field is DESC
+db.table("users").order_by("name").find()
+db.table("users").order_by("-created_at").find()
 
 # Field projection
 db.table("users").select("id", "name", "email").find()
@@ -196,6 +200,7 @@ db.table("users").create({"name": "New User", "email": "new@example.com"})
 
 # Aggregation
 db.table("orders").group_by("status").metrics(total="count").aggregate()
+db.table("orders").group_by("status").metrics(total="count(*)").having("total >= 3").aggregate()
 
 # Check existence
 if db.table("users").where(email="test@example.com").exists():
@@ -213,7 +218,7 @@ The Query Builder works uniformly across all database types:
 
 ```python
 # SQL (SQLite, MySQL, PostgreSQL, SQL Server)
-sql_db = UDOM(url="postgresql+psycopg2://postgres:pass@localhost/app")
+sql_db = UDOM(url="postgresql+psycopg2://username:pass@localhost/app")
 sql_db.table("users").where(active=True).order("name").limit(10).find()
 
 # NoSQL (MongoDB)
@@ -267,10 +272,10 @@ class User(UModel):
 
 User.bind(UDOM(url="sqlite:///app.db"))
 User.migrate()
-user = User(id=1, email="user@example.com", password="plain-text")
+user = User(id=1, email="user@example.com", password="password")
 user.save()
 print(User.find_one(where={"id": 1}).to_dict())
-print(User.find_one(where={"id": 1}).verify_secret("password", "plain-text"))
+print(User.find_one(where={"id": 1}).verify_secret("password", "password"))
 ```
 
 ### UModel with Query Builder
@@ -294,6 +299,19 @@ User.migrate()
 users = User.query().where(active=True).order("name").find()  # list[User]
 user = User.query().where(id=1).first()                       # User | None
 count = User.query().where(role="admin").count()              # int
+
+# UModel fields can be passed as query attributes
+users = User.query().where({User.active: True}).where_gte(User.id, 10).select(User.id, User.name).order_by(User.name).find()
+recent = User.query().order_by(-User.id).limit(10).find()
+totals = User.query().group_by(User.role).metrics(total="count(*)").having("total >= 3").aggregate()
+
+# Or use plain column-name strings when the model is already known
+users = User.query().where(active=True).select("id", "name").order_by("-id").find()
+totals = User.query().group_by("role").metrics(total="count(*)").having("total >= 3").aggregate()
+
+# Joined/relation columns use dotted names
+rows = User.query().join("Orders", on=("id", "user_id")).select("name", "Orders.id").order_by("-Orders.id").find()
+print(rows[0]["Orders.id"])
 
 # Chaining with comparison operators
 adults = User.query().where_gte(age=18).where_lt(age=65).find()
@@ -333,17 +351,54 @@ dbduck migrate --direction up
 For external projects:
 
 ```bash
-cd D:\dbduck_production
+cd <project-dir>
 $env:DATABASE_URL="sqlite:///app.db"
 dbduck makemigrations --module models --message "init"
 ```
+
+## Deployment
+
+Install the package and the backend driver extras your app uses:
+
+```bash
+pip install "dbduck[mysql]"      # MySQL
+pip install "dbduck[postgres]"   # PostgreSQL
+pip install "dbduck[mssql]"      # SQL Server
+pip install "dbduck[mongo]"      # MongoDB
+pip install "dbduck[all]"        # All optional backends
+```
+
+For local development from a source checkout, create a virtual environment and install the project in editable mode:
+
+```bash
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -e .
+```
+
+Set database URLs through environment variables instead of hard-coding credentials:
+
+```powershell
+$env:DATABASE_URL="mysql+pymysql://username:pass@localhost:3306/app"
+```
+
+For SQL production deployments:
+
+1. Define models with `UModel`.
+2. Run `dbduck makemigrations --module yourapp.models --message "change name"`.
+3. Review the generated migration in `migrations/sql`.
+4. Run `dbduck migrate --direction up`.
+5. Keep `admin_mode=True` only for trusted schema/database-object management code.
 
 ## Errors
 - DBDuck maps backend failures to DBDuck exceptions:
   - `ConnectionError`
   - `QueryError`
   - `TransactionError`
-- CLI commands return masked, developer-friendly messages instead of raw SQLAlchemy tracebacks.
+- Query errors include the real backend message to make debugging faster.
+- Connection errors remain classified as `ConnectionError`.
 - Use `--debug-errors` in `dbduck shell` if you want the full underlying traceback while debugging locally.
 
 ## Security
@@ -354,12 +409,12 @@ dbduck makemigrations --module models --message "init"
 - BCrypt hashing for sensitive fields.
 - `verify_secret()` helper for BCrypt validation.
 - Structured logging without raw SQL or user secrets in normal logs.
-- Custom exception hierarchy with masked execution errors.
+- Custom exception hierarchy with real query-error messages.
 - Security audit logging for blocked operations.
 - Per-caller rate limiting support.
 
 ## Roadmap
-DBDuck 0.4.1 delivers the hardened SQL core, Mongo support, Neo4j graph support, Qdrant vector support, AsyncUDOM, the CLI, and UModel-driven Alembic migrations.
+DBDuck 0.4.4 delivers the hardened SQL core, Mongo support, Neo4j graph support, Qdrant vector support, AsyncUDOM, the CLI, UModel attribute queries, friendly aggregate `having()` comparisons, `-field` descending ordering, and UModel-driven Alembic migrations.
 Next up: deeper vector backends, richer schema migration workflows, Redis and DynamoDB adapters, and first-class observability hooks.
 
 ## Contributing

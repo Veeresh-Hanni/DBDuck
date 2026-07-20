@@ -5,7 +5,7 @@ from DBDuck import UDOM
 
 def main() -> None:
     # Update credentials/host/database for your local MySQL.
-    url = "mysql+pymysql://root:pass@localhost:3306/dbduck"
+    url = "mysql+pymysql://username:pass@localhost:3306/dbduck"
     db = UDOM(db_type="sql", db_instance="mysql", url=url)
 
     print(db.create("Orders", {"order_id": 101, "customer": "A", "paid": True}))

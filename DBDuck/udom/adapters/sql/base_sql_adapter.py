@@ -32,7 +32,7 @@ class BaseSQLAdapter(BaseAdapter):
                     db="legacy-sql",
                     exc=e,
                 )
-                raise QueryError("Database execution failed") from e
+                raise QueryError(str(e) or e.__class__.__name__) from e
 
     # ---------- Universal UQL â†’ SQL ----------
     def convert_uql(self, uql):

@@ -332,7 +332,9 @@ def _map_sqlalchemy_error(db: UDOM, exc: Exception) -> ConnectionError | QueryEr
             return ConnectionError("Database connection failed")
     if hasattr(db.adapter, "_is_connection_like_exception") and db.adapter._is_connection_like_exception(exc):
         return ConnectionError("Database connection failed")
-    return QueryError("Database execution failed")
+    if hasattr(db.adapter, "_clean_error_message"):
+        return QueryError(db.adapter._clean_error_message(exc))
+    return QueryError(str(exc) or exc.__class__.__name__)
 
 
 def _friendly_error_detail(exc: BaseException) -> str | None:

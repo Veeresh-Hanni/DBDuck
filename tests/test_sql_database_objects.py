@@ -29,6 +29,20 @@ def test_sqlite_create_view_and_query_it(tmp_path) -> None:
     assert rows[0]["customer"] == "A"
 
 
+def test_sql_object_drop_requires_admin_mode(tmp_path) -> None:
+    db_file = tmp_path / "sql_drop_requires_admin.db"
+    admin_db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}", admin_mode=True)
+    user_db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
+
+    admin_db.create("Orders", {"order_id": 1, "paid": True})
+    admin_db.create_view("PaidOrders", "SELECT order_id FROM Orders WHERE paid = 1")
+
+    with pytest.raises(QueryError, match="drop_view requires explicit admin_mode=True"):
+        user_db.drop_view("PaidOrders")
+
+    admin_db.drop_view("PaidOrders")
+
+
 def test_sqlite_call_function_returns_scalar(tmp_path) -> None:
     db_file = tmp_path / "sql_functions.db"
     db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}", admin_mode=True)

@@ -19,14 +19,14 @@ SQL_MIGRATION_CASES = [
     ),
     pytest.param(
         "mysql",
-        lambda _project_dir: env_value("MYSQL_TEST_URL", "mysql+pymysql://root:password@localhost:3306/udom_test"),
+        lambda _project_dir: env_value("MYSQL_TEST_URL", "mysql+pymysql://username:pass@localhost:3306/udom_test"),
         id="mysql",
         marks=require_env_flag("RUN_MYSQL_INTEGRATION", reason="Set RUN_MYSQL_INTEGRATION=1 to run MySQL integration"),
     ),
     pytest.param(
         "postgres",
         lambda _project_dir: env_value(
-            "POSTGRES_TEST_URL", "postgresql+psycopg2://postgres:password@localhost:5432/udom_test"
+            "POSTGRES_TEST_URL", "postgresql+psycopg2://username:pass@localhost:5432/udom_test"
         ),
         id="postgres",
         marks=require_env_flag(
@@ -37,7 +37,7 @@ SQL_MIGRATION_CASES = [
         "mssql",
         lambda _project_dir: env_value(
             "MSSQL_TEST_URL",
-            "mssql+pyodbc://sa:Password!123@localhost:1433/udom_test?driver=ODBC+Driver+17+for+SQL+Server",
+            "mssql+pyodbc://username:pass@localhost:1433/udom_test?driver=ODBC+Driver+17+for+SQL+Server",
         ),
         id="mssql",
         marks=require_env_flag("RUN_MSSQL_INTEGRATION", reason="Set RUN_MSSQL_INTEGRATION=1 to run SQL Server integration"),

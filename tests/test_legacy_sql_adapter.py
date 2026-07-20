@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import pytest
+
+from DBDuck.core.exceptions import QueryError
 from DBDuck.udom.adapters.sql_adapter import ParameterizedSQL, SQLAdapter
 
 
 def test_legacy_sql_adapter_create_uql_returns_parameterized_sql() -> None:
     adapter = SQLAdapter(url="sqlite:///:memory:")
-    query = adapter.convert_uql("CREATE Users {name: 'Veeresh', age: 21, active: true}")
+    query = adapter.convert_uql("CREATE Users {name: 'Example User', age: 21, active: true}")
 
     assert isinstance(query, ParameterizedSQL)
     assert str(query) == 'INSERT INTO "Users" ("name", "age", "active") VALUES (:v_0, :v_1, :v_2);'
-    assert query.params == {"v_0": "Veeresh", "v_1": 21, "v_2": True}
+    assert query.params == {"v_0": "Example User", "v_1": 21, "v_2": True}
 
 
 def test_legacy_sql_adapter_find_uql_parameterizes_where_literals() -> None:
@@ -23,8 +26,25 @@ def test_legacy_sql_adapter_find_uql_parameterizes_where_literals() -> None:
 
 def test_legacy_sql_adapter_delete_uql_parameterizes_where_literals() -> None:
     adapter = SQLAdapter(url="sqlite:///:memory:")
-    query = adapter.convert_uql("DELETE Users WHERE name = 'Veeresh'")
+    query = adapter.convert_uql("DELETE Users WHERE name = 'Example User'")
 
     assert isinstance(query, ParameterizedSQL)
     assert str(query) == 'DELETE FROM "Users" WHERE "name" = :w_0;'
-    assert query.params == {"w_0": "Veeresh"}
+    assert query.params == {"w_0": "Example User"}
+
+
+def test_legacy_sql_adapter_update_requires_where() -> None:
+    adapter = SQLAdapter(url="sqlite:///:memory:")
+
+    with pytest.raises(QueryError, match="update requires a non-empty where condition"):
+        adapter.update("Users", {"name": "New"}, where=None)
+
+
+def test_legacy_sql_adapter_find_rejects_invalid_order_by_and_limit() -> None:
+    adapter = SQLAdapter(url="sqlite:///:memory:")
+
+    with pytest.raises(QueryError, match="Invalid order_by clause"):
+        adapter.find("Users", order_by="name; DROP TABLE Users")
+
+    with pytest.raises(QueryError, match="limit must be a positive integer"):
+        adapter.find("Users", limit="1; DROP TABLE Users")

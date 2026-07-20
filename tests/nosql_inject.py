@@ -8,8 +8,8 @@ def test_nosql_injection_on_dbduck() -> None:
     db = UDOM(db_type="nosql", db_instance="mongodb", url="mongodb://localhost:27017/dbduck_test")
     entity = "users_collection"
 
-    db.create(entity, {"username": "veeresh", "password": "secure_password_123"})
-    db.create(entity, {"username": "admin", "password": "top_secret_password"})
+    db.create(entity, {"username": "username", "password": "password"})
+    db.create(entity, {"username": "admin", "password": "password"})
 
     print("\n--- Starting MongoDB Security Tests ---")
 

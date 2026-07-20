@@ -75,7 +75,7 @@ db_name = "customer_db"
 # base_url = f"mysql+pymysql://{db_user}:{urllib.parse.quote_plus(db_pass)}@{db_hostname}:{port}/{db_name}"
 
 # psql
-url = f'postgresql://postgres:pass@loclahost:6543/{db_name}?sslmode=require'
+url = f'postgresql://username:pass@loclahost:6543/{db_name}?sslmode=require'
 # 1. Database name illade URL build madi
 # Note: port aamele '/' matra ide, db name illa.
 

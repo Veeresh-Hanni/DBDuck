@@ -21,6 +21,31 @@ if TYPE_CHECKING:
     from .udom import UDOM
 
 
+def _field_name(field: Any) -> str:
+    if isinstance(field, str):
+        return field
+    name = getattr(field, "name", None)
+    if isinstance(name, str) and name:
+        return name
+    return str(field)
+
+
+def _normalize_condition_mapping(conditions: Mapping[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for key, value in conditions.items():
+        if key in {"$and", "$or"}:
+            if isinstance(value, (list, tuple)):
+                normalized[key] = [
+                    _normalize_condition_mapping(item) if isinstance(item, Mapping) else item
+                    for item in value
+                ]
+            else:
+                normalized[key] = value
+            continue
+        normalized[_field_name(key)] = value
+    return normalized
+
+
 class QueryBuilder:
     """Fluent query builder for constructing database queries.
 
@@ -67,7 +92,7 @@ class QueryBuilder:
             if isinstance(conditions, str):
                 self._where_conditions["__raw__"] = conditions
             elif isinstance(conditions, Mapping):
-                self._where_conditions.update(conditions)
+                self._where_conditions.update(_normalize_condition_mapping(conditions))
         if kwargs:
             self._where_conditions.update(kwargs)
         return self
@@ -88,7 +113,7 @@ class QueryBuilder:
         """
         for group in condition_groups:
             if isinstance(group, Mapping) and group:
-                self._or_conditions.append(dict(group))
+                self._or_conditions.append(_normalize_condition_mapping(group))
         return self
 
     def where_in(self, field: str, values: list[Any]) -> "QueryBuilder":
@@ -106,10 +131,10 @@ class QueryBuilder:
         """
         if not isinstance(values, (list, tuple)):
             raise ValueError("values must be a list or tuple")
-        self._where_conditions[f"{field}__in"] = list(values)
+        self._where_conditions[f"{_field_name(field)}__in"] = list(values)
         return self
 
-    def where_not(self, **kwargs: Any) -> "QueryBuilder":
+    def where_not(self, field: Any = None, value: Any = None, **kwargs: Any) -> "QueryBuilder":
         """Add NOT conditions to the query.
 
         Args:
@@ -121,11 +146,22 @@ class QueryBuilder:
         Example:
             db.table("users").where_not(role="guest")
         """
-        for key, value in kwargs.items():
-            self._where_conditions[f"{key}__ne"] = value
+        return self._add_lookup_condition("ne", field, value, **kwargs)
+
+    def _add_lookup_condition(
+        self,
+        lookup: str,
+        field: Any = None,
+        value: Any = None,
+        **kwargs: Any,
+    ) -> "QueryBuilder":
+        if field is not None:
+            self._where_conditions[f"{_field_name(field)}__{lookup}"] = value
+        for key, item in kwargs.items():
+            self._where_conditions[f"{_field_name(key)}__{lookup}"] = item
         return self
 
-    def where_gt(self, **kwargs: Any) -> "QueryBuilder":
+    def where_gt(self, field: Any = None, value: Any = None, **kwargs: Any) -> "QueryBuilder":
         """Add greater-than conditions.
 
         Args:
@@ -137,11 +173,9 @@ class QueryBuilder:
         Example:
             db.table("users").where_gt(age=18)
         """
-        for key, value in kwargs.items():
-            self._where_conditions[f"{key}__gt"] = value
-        return self
+        return self._add_lookup_condition("gt", field, value, **kwargs)
 
-    def where_gte(self, **kwargs: Any) -> "QueryBuilder":
+    def where_gte(self, field: Any = None, value: Any = None, **kwargs: Any) -> "QueryBuilder":
         """Add greater-than-or-equal conditions.
 
         Args:
@@ -153,11 +187,9 @@ class QueryBuilder:
         Example:
             db.table("users").where_gte(age=21)
         """
-        for key, value in kwargs.items():
-            self._where_conditions[f"{key}__gte"] = value
-        return self
+        return self._add_lookup_condition("gte", field, value, **kwargs)
 
-    def where_lt(self, **kwargs: Any) -> "QueryBuilder":
+    def where_lt(self, field: Any = None, value: Any = None, **kwargs: Any) -> "QueryBuilder":
         """Add less-than conditions.
 
         Args:
@@ -169,11 +201,9 @@ class QueryBuilder:
         Example:
             db.table("users").where_lt(age=65)
         """
-        for key, value in kwargs.items():
-            self._where_conditions[f"{key}__lt"] = value
-        return self
+        return self._add_lookup_condition("lt", field, value, **kwargs)
 
-    def where_lte(self, **kwargs: Any) -> "QueryBuilder":
+    def where_lte(self, field: Any = None, value: Any = None, **kwargs: Any) -> "QueryBuilder":
         """Add less-than-or-equal conditions.
 
         Args:
@@ -185,11 +215,9 @@ class QueryBuilder:
         Example:
             db.table("users").where_lte(age=30)
         """
-        for key, value in kwargs.items():
-            self._where_conditions[f"{key}__lte"] = value
-        return self
+        return self._add_lookup_condition("lte", field, value, **kwargs)
 
-    def where_like(self, **kwargs: Any) -> "QueryBuilder":
+    def where_like(self, field: Any = None, value: Any = None, **kwargs: Any) -> "QueryBuilder":
         """Add LIKE pattern conditions (SQL) or regex (NoSQL).
 
         Args:
@@ -201,9 +229,7 @@ class QueryBuilder:
         Example:
             db.table("users").where_like(name="%john%")
         """
-        for key, value in kwargs.items():
-            self._where_conditions[f"{key}__like"] = value
-        return self
+        return self._add_lookup_condition("like", field, value, **kwargs)
 
     def where_null(self, *fields: str) -> "QueryBuilder":
         """Add IS NULL conditions for fields.
@@ -218,7 +244,7 @@ class QueryBuilder:
             db.table("users").where_null("deleted_at")
         """
         for field in fields:
-            self._where_conditions[f"{field}__null"] = True
+            self._where_conditions[f"{_field_name(field)}__null"] = True
         return self
 
     def where_not_null(self, *fields: str) -> "QueryBuilder":
@@ -234,7 +260,7 @@ class QueryBuilder:
             db.table("users").where_not_null("email")
         """
         for field in fields:
-            self._where_conditions[f"{field}__notnull"] = True
+            self._where_conditions[f"{_field_name(field)}__notnull"] = True
         return self
 
     def select(self, *fields: str) -> "QueryBuilder":
@@ -250,7 +276,7 @@ class QueryBuilder:
             db.table("users").select("id", "name", "email").find()
         """
         if fields:
-            self._select_fields = list(fields)
+            self._select_fields = [_field_name(field) for field in fields]
         return self
 
     def order(self, field: str, direction: str = "ASC") -> "QueryBuilder":
@@ -266,7 +292,11 @@ class QueryBuilder:
         Example:
             db.table("users").order("created_at", "DESC")
         """
-        direction = direction.upper().strip()
+        field = _field_name(field).strip()
+        descending_prefix = field.startswith("-")
+        if descending_prefix:
+            field = field[1:].strip()
+        direction = "DESC" if descending_prefix else direction.upper().strip()
         if direction not in ("ASC", "DESC"):
             raise ValueError("direction must be 'ASC' or 'DESC'")
         self._order_by = f"{field} {direction}" if direction == "DESC" else field
@@ -284,7 +314,7 @@ class QueryBuilder:
         Example:
             db.table("users").order_by("created_at DESC")
         """
-        self._order_by = order_expr
+        self._order_by = _field_name(order_expr)
         return self
 
     def limit(self, count: int) -> "QueryBuilder":
@@ -355,9 +385,9 @@ class QueryBuilder:
             db.table("orders").group_by("status").aggregate(metrics={"total": "count"})
         """
         if len(fields) == 1:
-            self._group_by_fields = fields[0]
+            self._group_by_fields = _field_name(fields[0])
         else:
-            self._group_by_fields = list(fields)
+            self._group_by_fields = [_field_name(field) for field in fields]
         return self
 
     def join(
@@ -382,9 +412,9 @@ class QueryBuilder:
         if normalized_type not in {"inner", "left"}:
             raise ValueError("join_type must be 'inner' or 'left'")
         if isinstance(on, Mapping):
-            pairs = [(str(left), str(right)) for left, right in on.items()]
+            pairs = [(_field_name(left), _field_name(right)) for left, right in on.items()]
         elif isinstance(on, (tuple, list)) and len(on) == 2:
-            pairs = [(str(on[0]), str(on[1]))]
+            pairs = [(_field_name(on[0]), _field_name(on[1]))]
         else:
             raise ValueError("on must be a mapping or a 2-item tuple/list")
         if not pairs:
@@ -419,7 +449,7 @@ class QueryBuilder:
         Example:
             db.table("orders").group_by("user_id").having({"count": {"$gt": 5}})
         """
-        self._having_conditions = conditions
+        self._having_conditions = _normalize_condition_mapping(conditions) if isinstance(conditions, Mapping) else conditions
         return self
 
     def metrics(self, **kwargs: Any) -> "QueryBuilder":
@@ -672,11 +702,11 @@ class QueryBuilder:
         text = self._order_by.strip()
         import re
 
-        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)(?:\s+(ASC|DESC))?", text, re.IGNORECASE)
+        match = re.fullmatch(r"(-?)([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)(?:\s+(ASC|DESC))?", text, re.IGNORECASE)
         if not match:
             raise QueryError("Invalid order_by clause")
-        field_ref = match.group(1)
-        direction = (match.group(2) or "ASC").upper()
+        descending_prefix, field_ref = match.group(1), match.group(2)
+        direction = (match.group(3) or ("DESC" if descending_prefix else "ASC")).upper()
         _, _, column = self._resolve_field_reference(table_map, field_ref)
         return column.asc() if direction == "ASC" else column.desc()
 
@@ -769,11 +799,79 @@ class QueryBuilder:
             expression = builder(column)
         return expression.label(alias_name)
 
+    def _normalize_join_having_value(self, entity_name: str, field_name: str, value: Any) -> Any:
+        adapter = self._udom.adapter
+        if isinstance(value, Mapping):
+            return {
+                str(op): adapter._normalize_value_for_column(entity_name, field_name, operand)
+                for op, operand in value.items()
+            }
+        return adapter._normalize_value_for_column(entity_name, field_name, value)
+
+    def _build_join_having_expression(
+        self,
+        table_map: Mapping[str, Any],
+        metric_aliases: Mapping[str, Any],
+    ):
+        from sqlalchemy import and_
+
+        adapter = self._udom.adapter
+        having = self._having_conditions
+        if having is None:
+            return None, {}
+
+        conditions = []
+        params: dict[str, Any] = {}
+
+        if isinstance(having, Mapping):
+            for idx, (key, value) in enumerate(having.items()):
+                key_text = str(key)
+                if key_text in metric_aliases:
+                    parts, part_params = adapter._build_comparison_conditions(metric_aliases[key_text], value, f"h_{idx}")
+                else:
+                    entity_name, field_name, column = self._resolve_field_reference(table_map, key_text)
+                    normalized_value = self._normalize_join_having_value(entity_name, field_name, value)
+                    parts, part_params = adapter._build_comparison_conditions(column, normalized_value, f"h_{idx}")
+                conditions.extend(parts)
+                params.update(part_params)
+            return (and_(*conditions) if conditions else None), params
+
+        if isinstance(having, str):
+            text = having.strip()
+            if not text:
+                return None, {}
+            tokens = re.split(r"\s+AND\s+", text, flags=re.IGNORECASE)
+            op_names = {"=": "eq", "!=": "ne", "<>": "ne", ">": "gt", ">=": "gte", "<": "lt", "<=": "lte"}
+            for idx, token in enumerate(tokens):
+                match = re.fullmatch(
+                    r"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*(=|!=|<>|>=|<=|>|<)\s*(.+)",
+                    token.strip(),
+                )
+                if not match:
+                    raise QueryError("Unsupported having string format; use e.g. total >= 3")
+                field_ref, op_symbol, raw_value = match.group(1), match.group(2), match.group(3)
+                value = adapter._parse_literal_value(raw_value)
+                if field_ref in metric_aliases:
+                    expression = metric_aliases[field_ref]
+                else:
+                    entity_name, field_name, expression = self._resolve_field_reference(table_map, field_ref)
+                    value = adapter._normalize_value_for_column(entity_name, field_name, value)
+                parts, part_params = adapter._build_comparison_conditions(
+                    expression,
+                    {op_names[op_symbol]: value},
+                    f"hs_{idx}",
+                )
+                conditions.extend(parts)
+                params.update(part_params)
+            return (and_(*conditions) if conditions else None), params
+
+        raise QueryError("having must be a mapping, string, or None")
+
     def _aggregate_with_joins(self, metrics: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
         adapter = self._require_sql_joins()
         if adapter is None:
             return []
-        from sqlalchemy import and_, bindparam, select
+        from sqlalchemy import select
 
         from_clause, table_map = self._build_joined_from_clause()
         group_fields = self._normalize_join_aggregate_fields(self._group_by_fields)
@@ -793,23 +891,10 @@ class QueryBuilder:
             stmt = stmt.where(where_expr)
         if group_columns:
             stmt = stmt.group_by(*group_columns)
-        if isinstance(self._having_conditions, Mapping):
-            having_conditions = []
-            for idx, (key, value) in enumerate(self._having_conditions.items()):
-                key_text = str(key)
-                pname = f"h_{idx}"
-                if key_text in metric_aliases:
-                    having_conditions.append(metric_aliases[key_text] == bindparam(pname))
-                    params[pname] = value
-                else:
-                    _, entity_field, column = self._resolve_field_reference(table_map, key_text)
-                    entity_name = key_text.split(".", 1)[0] if "." in key_text else self._entity
-                    having_conditions.append(column == bindparam(pname))
-                    params[pname] = adapter._normalize_value_for_column(entity_name, entity_field, value)
-            if having_conditions:
-                stmt = stmt.having(and_(*having_conditions))
-        elif self._having_conditions:
-            raise QueryError("string having clauses are not supported for joined aggregate queries; use a mapping")
+        having_expr, having_params = self._build_join_having_expression(table_map, metric_aliases)
+        if having_expr is not None:
+            stmt = stmt.having(having_expr)
+            params.update(having_params)
         order_clause = None
         if self._order_by:
             field, direction = self._udom.adapter._parse_order_by_components(self._order_by)

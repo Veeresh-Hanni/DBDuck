@@ -18,6 +18,36 @@ from ...core.exceptions import QueryError
 TModel = TypeVar("TModel", bound="UModel")
 
 
+class ModelFieldReference:
+    """Class-level field reference for annotation-only UModel fields."""
+
+    def __init__(self, name: str | None = None) -> None:
+        self.name = name
+
+    def __set_name__(self, owner, name: str) -> None:
+        if self.name is None:
+            self.name = name
+
+    def __get__(self, instance, owner):
+        if instance is None:
+            return self
+        if self.name in instance.__dict__:
+            return instance.__dict__[self.name]
+        raise AttributeError(self.name or "field")
+
+    def __set__(self, instance, value: Any) -> None:
+        instance.__dict__[self.name] = value
+
+    def __str__(self) -> str:
+        return str(self.name or "")
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __neg__(self) -> str:
+        return f"-{self}"
+
+
 class UModel:
     """Base class for all data models in UDOM.
 
@@ -30,9 +60,21 @@ class UModel:
     __sensitive_fields__: list[str] | tuple[str, ...] | None = None
     __schema_migrations_table__ = "dbduck_schema_migrations"
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        for field_name in getattr(cls, "__annotations__", {}):
+            if field_name.startswith("_") or hasattr(cls, field_name):
+                continue
+            descriptor = ModelFieldReference(field_name)
+            descriptor.__set_name__(cls, field_name)
+            setattr(cls, field_name, descriptor)
+
     def __init__(self, **kwargs: Any) -> None:
         for key, value in kwargs.items():
             setattr(self, key, value)
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
 
     @classmethod
     def bind(cls, db) -> type["UModel"]:
@@ -94,7 +136,11 @@ class UModel:
 
         loaded_fields = getattr(self, "_udom_loaded_fields", None)
         if loaded_fields is not None:
-            data = {key: value for key, value in data.items() if key in loaded_fields}
+            data = {
+                key: getattr(self, key)
+                for key in loaded_fields
+                if hasattr(self, key)
+            }
 
         if not include_sensitive:
             sensitive = set(getattr(self.__class__, "__sensitive_fields__", []) or [])
@@ -600,18 +646,6 @@ class UModel:
         for key, value in payload.items():
             normalized[key] = cls._serialize_for_db(value, db_type)
         return normalized
-    
-    @classmethod
-    def _protect_sensitive_fields(cls, payload: Mapping[str, Any], resolved_db: Any) -> dict[str, Any]:
-        settings = getattr(resolved_db, "settings", None)
-        enabled = bool(getattr(settings, "hash_sensitive_fields", True))
-        rounds = int(getattr(settings, "bcrypt_rounds", 12))
-        return SensitiveFieldProtector.protect_mapping(
-            payload,
-            enabled=enabled,
-            rounds=rounds,
-            field_names=cls.get_sensitive_fields(),
-        )
 
     @classmethod
     def _serialize_for_db(cls, value: Any, db_type: str) -> Any:
@@ -804,6 +838,12 @@ class ModelQueryBuilder(Generic[TModel]):
         self._udom = udom
         self._builder = QueryBuilder(udom, model_cls.get_name())
 
+    def __getattr__(self, name: str) -> Any:
+        """Return model field references from a model-bound query object."""
+        if name in self._model_cls.get_fields():
+            return getattr(self._model_cls, name)
+        raise AttributeError(name)
+
     def where(self, conditions: Mapping[str, Any] | str | None = None, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
         """Add WHERE conditions."""
         self._builder.where(conditions, **kwargs)
@@ -819,34 +859,34 @@ class ModelQueryBuilder(Generic[TModel]):
         self._builder.where_in(field, values)
         return self
 
-    def where_not(self, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
+    def where_not(self, field: Any = None, value: Any = None, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
         """Add NOT conditions."""
-        self._builder.where_not(**kwargs)
+        self._builder.where_not(field, value, **kwargs)
         return self
 
-    def where_gt(self, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
+    def where_gt(self, field: Any = None, value: Any = None, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
         """Add greater-than conditions."""
-        self._builder.where_gt(**kwargs)
+        self._builder.where_gt(field, value, **kwargs)
         return self
 
-    def where_gte(self, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
+    def where_gte(self, field: Any = None, value: Any = None, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
         """Add greater-than-or-equal conditions."""
-        self._builder.where_gte(**kwargs)
+        self._builder.where_gte(field, value, **kwargs)
         return self
 
-    def where_lt(self, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
+    def where_lt(self, field: Any = None, value: Any = None, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
         """Add less-than conditions."""
-        self._builder.where_lt(**kwargs)
+        self._builder.where_lt(field, value, **kwargs)
         return self
 
-    def where_lte(self, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
+    def where_lte(self, field: Any = None, value: Any = None, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
         """Add less-than-or-equal conditions."""
-        self._builder.where_lte(**kwargs)
+        self._builder.where_lte(field, value, **kwargs)
         return self
 
-    def where_like(self, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
+    def where_like(self, field: Any = None, value: Any = None, **kwargs: Any) -> "ModelQueryBuilder[TModel]":
         """Add LIKE conditions."""
-        self._builder.where_like(**kwargs)
+        self._builder.where_like(field, value, **kwargs)
         return self
 
     def where_null(self, *fields: str) -> "ModelQueryBuilder[TModel]":
@@ -892,6 +932,27 @@ class ModelQueryBuilder(Generic[TModel]):
     def group_by(self, *fields: str) -> "ModelQueryBuilder[TModel]":
         """Set GROUP BY fields."""
         self._builder.group_by(*fields)
+        return self
+
+    def join(
+        self,
+        entity: str,
+        *,
+        on: Mapping[str, str] | tuple[str, str] | list[str],
+        join_type: str = "inner",
+    ) -> "ModelQueryBuilder[TModel]":
+        """Add a SQL join clause."""
+        self._builder.join(entity, on=on, join_type=join_type)
+        return self
+
+    def left_join(
+        self,
+        entity: str,
+        *,
+        on: Mapping[str, str] | tuple[str, str] | list[str],
+    ) -> "ModelQueryBuilder[TModel]":
+        """Add a SQL LEFT JOIN clause."""
+        self._builder.left_join(entity, on=on)
         return self
 
     def having(self, conditions: Mapping[str, Any] | str) -> "ModelQueryBuilder[TModel]":

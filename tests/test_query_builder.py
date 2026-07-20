@@ -113,10 +113,22 @@ class TestQueryBuilderChaining:
         ages = [u["age"] for u in users]
         assert ages == sorted(ages, reverse=True)
 
+    def test_order_desc_with_minus_prefix(self, db):
+        """order() accepts -field shorthand for DESC."""
+        users = db.table("users").where(active=1).order("-age").find()
+        ages = [u["age"] for u in users]
+        assert ages == sorted(ages, reverse=True)
+
     def test_order_by_string(self, db):
         """order_by() with raw string."""
         users = db.table("users").order_by("name DESC").limit(2).find()
         assert len(users) == 2
+
+    def test_order_by_desc_with_minus_prefix(self, db):
+        """order_by() accepts -field shorthand for DESC."""
+        users = db.table("users").where(active=1).order_by("-age").find()
+        ages = [u["age"] for u in users]
+        assert ages == sorted(ages, reverse=True)
 
     def test_limit(self, db):
         """limit() restricts results."""
@@ -438,6 +450,17 @@ class TestQueryBuilderJoins:
             {"name": "Bob", "orders.status": "completed"},
         ]
 
+    def test_join_order_by_desc_with_minus_prefix(self, db):
+        """joined queries accept -entity.field shorthand for DESC."""
+        rows = (
+            db.table("users")
+            .join("orders", on=("id", "user_id"))
+            .select("name", "orders.id")
+            .order_by("-orders.id")
+            .find()
+        )
+        assert [row["orders.id"] for row in rows] == [3, 2, 1]
+
     def test_left_join_where_null(self, db):
         """left_join() supports NULL filtering on joined columns."""
         rows = (
@@ -492,6 +515,32 @@ class TestQueryBuilderJoins:
             {"name": "Alice", "total": 2},
             {"name": "Bob", "total": 1},
         ]
+
+    def test_join_aggregate_having_metric_alias_string(self, db):
+        """joined aggregate supports friendly HAVING strings like total >= 2."""
+        rows = (
+            db.table("users")
+            .group_by("name")
+            .left_join("orders", on=("id", "user_id"))
+            .metrics(total="count(orders.id)")
+            .having("total >= 2")
+            .order_by("name ASC")
+            .aggregate()
+        )
+        assert rows == [{"name": "Alice", "total": 2}]
+
+    def test_join_aggregate_having_metric_alias_friendly_mapping(self, db):
+        """joined aggregate supports friendly operators without Mongo-style dollars."""
+        rows = (
+            db.table("users")
+            .group_by("name")
+            .left_join("orders", on=("id", "user_id"))
+            .metrics(total="count(orders.id)")
+            .having({"total": {"gte": 1}})
+            .order_by("name ASC")
+            .aggregate()
+        )
+        assert rows == [{"name": "Alice", "total": 2}, {"name": "Bob", "total": 1}]
 
     def test_join_aggregate_rejects_empty_group_by(self, db):
         """joined aggregate rejects empty group_by fields like non-join aggregate."""

@@ -33,7 +33,6 @@ class SQLAlchemyAdapter(BaseAdapter):
     _SQLALCHEMY_URL_RE = re.compile(r"\s*https?://sqlalche\.me/[^\s\)]*\s*", re.IGNORECASE)
     _CONNECTION_ERROR_CODES = {2002, 2003, 2006, 2013}
     _AGG_FUNC_RE = re.compile(r"^\s*(count|sum|avg|min|max)\s*\(\s*(\*|[A-Za-z_][A-Za-z0-9_]*)\s*\)\s*$", re.IGNORECASE)
-    _PUBLIC_QUERY_ERROR = "Database execution failed"
     _PUBLIC_CONNECTION_ERROR = "Database connection failed"
 
     def __init__(self, url: str, **options: Any) -> None:
@@ -172,10 +171,11 @@ class SQLAlchemyAdapter(BaseAdapter):
 
     def _parse_order_by_components(self, order_by: str) -> tuple[str, str]:
         safe_order = order_by.strip()
-        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)(?:\s+(ASC|DESC))?", safe_order, re.IGNORECASE)
+        match = re.fullmatch(r"(-?)([A-Za-z_][A-Za-z0-9_]*)(?:\s+(ASC|DESC))?", safe_order, re.IGNORECASE)
         if not match:
             raise QueryError("Invalid order_by clause")
-        field, direction = match.group(1), (match.group(2) or "ASC").upper()
+        descending_prefix, field = match.group(1), match.group(2)
+        direction = (match.group(3) or ("DESC" if descending_prefix else "ASC")).upper()
         self._validate_identifier(field)
         return field, direction
 
@@ -451,7 +451,8 @@ class SQLAlchemyAdapter(BaseAdapter):
             )
             if self._is_connection_like_exception(exc):
                 raise ConnectionError(self._PUBLIC_CONNECTION_ERROR) from exc
-            raise QueryError(self._PUBLIC_QUERY_ERROR) from exc
+            message = self._clean_error_message(exc)
+            raise QueryError(message) from exc
 
         finally:
             if result is not None:
@@ -643,10 +644,11 @@ class SQLAlchemyAdapter(BaseAdapter):
 
     def _validate_order_by_clause(self, order_by: str) -> str:
         safe_order = order_by.strip()
-        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)(?:\s+(ASC|DESC))?", safe_order, re.IGNORECASE)
+        match = re.fullmatch(r"(-?)([A-Za-z_][A-Za-z0-9_]*)(?:\s+(ASC|DESC))?", safe_order, re.IGNORECASE)
         if not match:
             raise QueryError("Invalid order_by clause")
-        field, direction = match.group(1), (match.group(2) or "ASC").upper()
+        descending_prefix, field = match.group(1), match.group(2)
+        direction = (match.group(3) or ("DESC" if descending_prefix else "ASC")).upper()
         self._validate_identifier(field)
         return f"{self._quote(field)} {direction}"
 
@@ -826,6 +828,98 @@ class SQLAlchemyAdapter(BaseAdapter):
         expression = builder() if metric_column is None else builder(metric_column)
         return expression.label(alias_name)
 
+    @staticmethod
+    def _normalize_comparison_mapping(value: Mapping[str, Any]) -> list[tuple[str, Any]]:
+        op_aliases = {
+            "eq": "eq",
+            "=": "eq",
+            "$eq": "eq",
+            "ne": "ne",
+            "!=": "ne",
+            "<>": "ne",
+            "$ne": "ne",
+            "gt": "gt",
+            ">": "gt",
+            "$gt": "gt",
+            "gte": "gte",
+            ">=": "gte",
+            "$gte": "gte",
+            "lt": "lt",
+            "<": "lt",
+            "$lt": "lt",
+            "lte": "lte",
+            "<=": "lte",
+            "$lte": "lte",
+        }
+        comparisons: list[tuple[str, Any]] = []
+        for raw_op, operand in value.items():
+            op = op_aliases.get(str(raw_op).strip().lower())
+            if op is None:
+                raise QueryError(f"Unsupported comparison operator: {raw_op}")
+            comparisons.append((op, operand))
+        if not comparisons:
+            raise QueryError("comparison mapping cannot be empty")
+        return comparisons
+
+    @classmethod
+    def _build_comparison_conditions(cls, expression, value: Any, param_prefix: str) -> tuple[list[Any], dict[str, Any]]:
+        if isinstance(value, Mapping):
+            comparisons = cls._normalize_comparison_mapping(value)
+        else:
+            comparisons = [("eq", value)]
+        operator_map = {
+            "eq": lambda expr, param: expr == bindparam(param),
+            "ne": lambda expr, param: expr != bindparam(param),
+            "gt": lambda expr, param: expr > bindparam(param),
+            "gte": lambda expr, param: expr >= bindparam(param),
+            "lt": lambda expr, param: expr < bindparam(param),
+            "lte": lambda expr, param: expr <= bindparam(param),
+        }
+        conditions = []
+        params: dict[str, Any] = {}
+        for idx, (op, operand) in enumerate(comparisons):
+            pname = f"{param_prefix}_{idx}"
+            conditions.append(operator_map[op](expression, pname))
+            params[pname] = operand
+        return conditions, params
+
+    def _build_aggregate_having_string(
+        self,
+        entity: str,
+        table: Table,
+        having: str,
+        metric_aliases: Mapping[str, Any],
+    ) -> tuple[Any | None, dict[str, Any]]:
+        text_having = having.strip()
+        if not text_having:
+            return None, {}
+        if self._DANGEROUS_SQL.search(text_having):
+            raise QueryError("Potential SQL injection detected in having clause")
+        tokens = re.split(r"\s+AND\s+", text_having, flags=re.IGNORECASE)
+        conditions = []
+        params: dict[str, Any] = {}
+        op_names = {"=": "eq", "!=": "ne", "<>": "ne", ">": "gt", ">=": "gte", "<": "lt", "<=": "lte"}
+        for idx, token in enumerate(tokens):
+            match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\s*(=|!=|<>|>=|<=|>|<)\s*(.+)", token.strip())
+            if not match:
+                raise QueryError("Unsupported having string format; use e.g. total >= 3")
+            field, op_symbol, raw_value = match.group(1), match.group(2), match.group(3)
+            value = self._parse_literal_value(raw_value)
+            if field in metric_aliases:
+                expression = metric_aliases[field]
+            else:
+                self._validate_identifier(field)
+                expression = self._resolve_column(table, field)
+                value = self._normalize_value_for_column(entity, field, value)
+            parts, part_params = self._build_comparison_conditions(
+                expression,
+                {op_names[op_symbol]: value},
+                f"hs_{idx}",
+            )
+            conditions.extend(parts)
+            params.update(part_params)
+        return (and_(*conditions) if conditions else None), params
+
     def aggregate(
         self,
         entity: str,
@@ -867,15 +961,24 @@ class SQLAlchemyAdapter(BaseAdapter):
             having_params: dict[str, Any] = {}
             for idx, (key, value) in enumerate(having.items()):
                 self._validate_identifier(key)
-                pname = f"h_{idx}"
                 if key in metric_aliases:
-                    having_conditions.append(metric_aliases[key] == bindparam(pname))
-                    having_params[pname] = value
+                    parts, part_params = self._build_comparison_conditions(metric_aliases[key], value, f"h_{idx}")
                 else:
                     column = self._resolve_column(table, key)
-                    having_conditions.append(column == bindparam(pname))
-                    having_params[pname] = self._normalize_value_for_column(entity, key, value)
+                    normalized_value = (
+                        {
+                            op: self._normalize_value_for_column(entity, key, operand)
+                            for op, operand in value.items()
+                        }
+                        if isinstance(value, Mapping)
+                        else self._normalize_value_for_column(entity, key, value)
+                    )
+                    parts, part_params = self._build_comparison_conditions(column, normalized_value, f"h_{idx}")
+                having_conditions.extend(parts)
+                having_params.update(part_params)
             having_expr = and_(*having_conditions) if having_conditions else None
+        elif isinstance(having, str):
+            having_expr, having_params = self._build_aggregate_having_string(entity, table, having, metric_aliases)
         else:
             having_expr, having_params = self._build_having_expression(entity, table, having)
         if having_expr is not None:
@@ -981,6 +1084,7 @@ class SQLAlchemyAdapter(BaseAdapter):
 
     def drop_view(self, name: str, *, if_exists: bool = True) -> Any:
         view_name = self._validate_identifier(name)
+        self._require_admin_mode("drop_view")
         sql = f"DROP VIEW {'IF EXISTS ' if if_exists else ''}{self._quote(view_name)}"  # nosec B608
         return self.run_native(sql)
 
@@ -1003,6 +1107,7 @@ class SQLAlchemyAdapter(BaseAdapter):
         proc_name = self._validate_identifier(name)
         if self.DIALECT == "sqlite":
             raise QueryError("stored procedures are not supported for sqlite")
+        self._require_admin_mode("drop_procedure")
         sql = f"DROP PROCEDURE {'IF EXISTS ' if if_exists else ''}{self._quote(proc_name)}"  # nosec B608
         return self.run_native(sql)
 
@@ -1038,6 +1143,7 @@ class SQLAlchemyAdapter(BaseAdapter):
         func_name = self._validate_identifier(name)
         if self.DIALECT == "sqlite":
             raise QueryError("function dropping is not supported for sqlite")
+        self._require_admin_mode("drop_function")
         sql = f"DROP FUNCTION {'IF EXISTS ' if if_exists else ''}{self._quote(func_name)}"  # nosec B608
         return self.run_native(sql)
 
@@ -1091,5 +1197,6 @@ class SQLAlchemyAdapter(BaseAdapter):
         event_name = self._validate_identifier(name)
         if self.DIALECT != "mysql":
             raise QueryError("database events are currently supported only for mysql")
+        self._require_admin_mode("drop_event")
         sql = f"DROP EVENT {'IF EXISTS ' if if_exists else ''}{self._quote(event_name)}"  # nosec B608
         return self.run_native(sql)

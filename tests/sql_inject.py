@@ -9,11 +9,11 @@ from DBDuck.core.exceptions import QueryError
 import time
 
 def test_sql_injection_on_dbduck() -> None:
-    db = UDOM(db_type="sql", db_instance="mysql", url="mysql+pymysql://root:pass@localhost:3306/dbduck")
+    db = UDOM(db_type="sql", db_instance="mysql", url="mysql+pymysql://username:pass@localhost:3306/dbduck")
     entity = f"users_security_{uuid4().hex[:8]}"
 
     malicious_id = "1 OR 1=1"
-    malicious_name = "Veeresh'; DROP TABLE users; --"
+    malicious_name = "Example User'; DROP TABLE users; --"
 
     db.create(entity, {"id": 1, "name": "basu"})
     db.create(entity, {"id": 2, "name": malicious_name})
@@ -113,16 +113,16 @@ odbc_str = (
     "DRIVER={ODBC Driver 17 for SQL Server};"
     "SERVER=servername;"
     "DATABASE=dbduck;"
-    "UID=sa;"
+    "UID=username;"
     "PWD=pass;"
     "TrustServerCertificate=yes;"
 )
 url = f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_str)}"
 
 DB_CONFIGS = [
-    {"db_instance": "mysql", "url": "mysql+pymysql://root:pass@localhost:3306/dbduck"},
+    {"db_instance": "mysql", "url": "mysql+pymysql://username:pass@localhost:3306/dbduck"},
     {"db_instance": "sqlite", "url": "sqlite:///test_dbduck.db"},
-    {"db_instance": "postgres", "url": "postgresql+psycopg2://postgres:pass@localhost:5432/dbduck"},
+    {"db_instance": "postgres", "url": "postgresql+psycopg2://username:pass@localhost:5432/dbduck"},
     # MSSQL Addition
     {"db_instance": "mssql", "url": url}
 ]
@@ -131,7 +131,7 @@ def run_security_suite(db_config):
     print(f"\n🚀 Testing Security for Engine: {db_config['db_instance'].upper()}")
     db = UDOM(db_type="sql", **db_config)
     entity = f"sec_test_{uuid4().hex[:6]}"
-    db.create(entity, {"id": 1, "name": "Veeresh"})
+    db.create(entity, {"id": 1, "name": "Example User"})
 
     # --- TEST: TIME-BASED BLIND SQLi (Engine Specific) ---
     payloads = {
@@ -157,7 +157,7 @@ def run_security_suite(db_config):
     print(f"✅ PASS: Time-based attack neutralized (Took {duration:.2f}s)")
 if __name__ == "__main__":
     test_sql_injection_on_dbduck()
-    db = UDOM(db_type="sql", db_instance="mysql", url="mysql+pymysql://root:pass@localhost:3306/dbduck")
+    db = UDOM(db_type="sql", db_instance="mysql", url="mysql+pymysql://username:pass@localhost:3306/dbduck")
     # test_advanced_sqli_protection(db=db, entity="users")
     test_advanced_security_scenarios(db=db, entity="users")
     # Run the suite across all configured engines

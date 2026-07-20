@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 from importlib import import_module
-from typing import Any, Iterable, get_args
+from typing import Any, Iterable, Mapping, get_args
 
 import sqlalchemy as sa
 from sqlalchemy import Boolean as SABoolean
@@ -182,6 +182,28 @@ def _column_from_descriptor(name: str, descriptor: DBDuckColumn) -> SAColumn:
     return SAColumn(name, _sa_type_for(descriptor.type_), **kwargs)
 
 
+def _index_columns_from_spec(spec: Any) -> tuple[str, ...]:
+    if isinstance(spec, Mapping):
+        fields = spec.get("fields")
+        if not isinstance(fields, (list, tuple)) or not fields:
+            raise ValueError("index.fields must be a non-empty list")
+        names: list[str] = []
+        for item in fields:
+            raw_name = item.get("name") if isinstance(item, Mapping) else item
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                raise ValueError("each index field must include a non-empty name")
+            names.append(raw_name.strip())
+        return tuple(names)
+
+    if isinstance(spec, (tuple, list)):
+        names = tuple(str(item).strip() for item in spec)
+    else:
+        names = (str(spec).strip(),)
+    if not names or any(not name for name in names):
+        raise ValueError("index spec contains an empty field name")
+    return names
+
+
 def build_metadata_from_models(model_classes: Iterable[type[UModel]]) -> MetaData:
     metadata = MetaData()
     for model_cls in model_classes:
@@ -201,10 +223,9 @@ def build_metadata_from_models(model_classes: Iterable[type[UModel]]) -> MetaDat
 
         table = Table(table_name, metadata, *sa_columns)
 
-        # NEW: build indexes from __indexes__
         index_specs = getattr(model_cls, "__indexes__", []) or []
-        for idx, spec in enumerate(index_specs):
-            columns = spec if isinstance(spec, (tuple, list)) else (spec,)
+        for spec in index_specs:
+            columns = _index_columns_from_spec(spec)
             index_name = f"ix_{table_name}_" + "_".join(columns)
             sa.Index(index_name, *[table.c[col] for col in columns])
 

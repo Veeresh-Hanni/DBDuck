@@ -26,13 +26,13 @@ def test_route_sql_adapter_supports_mssql_and_alias() -> None:
     assert resolved == "mssql"
     assert adapter_cls is MSSQLAdapter
 
-    resolved, adapter_cls = AdapterRouter.route_sql_adapter(None, "sqlserver+pyodbc://sa:pw@localhost/db")
+    resolved, adapter_cls = AdapterRouter.route_sql_adapter(None, "sqlserver+pyodbc://username:pass@localhost/db")
     assert resolved == "mssql"
     assert adapter_cls is MSSQLAdapter
 
 
 def test_route_sql_adapter_prefers_url_dialect_over_conflicting_db_instance() -> None:
-    resolved, adapter_cls = AdapterRouter.route_sql_adapter("sqlite", "mssql+pyodbc://sa:pw@localhost/db")
+    resolved, adapter_cls = AdapterRouter.route_sql_adapter("sqlite", "mssql+pyodbc://username:pass@localhost/db")
     assert resolved == "mssql"
     assert adapter_cls is MSSQLAdapter
     assert adapter_cls is not SQLiteAdapter

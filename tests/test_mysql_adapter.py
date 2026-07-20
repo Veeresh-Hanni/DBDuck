@@ -41,6 +41,22 @@ def test_sqlite_adapter_create_many(tmp_path) -> None:
     assert result["rows_affected"] == 2
 
 
+def test_sqlite_adapter_order_by_desc_with_minus_prefix(tmp_path) -> None:
+    db_path = tmp_path / "adapter_order_prefix.db"
+    adapter = SQLiteAdapter(url=f"sqlite:///{db_path.as_posix()}")
+    adapter.create_many(
+        "Users",
+        [
+            {"name": "A", "age": 20},
+            {"name": "B", "age": 30},
+        ],
+    )
+
+    rows = adapter.find("Users", order_by="-age")
+
+    assert [row["age"] for row in rows] == [30, 20]
+
+
 def test_sqlite_adapter_rejects_invalid_numeric_where_value(tmp_path) -> None:
     db_path = tmp_path / "adapter_numeric_guard.db"
     adapter = SQLiteAdapter(url=f"sqlite:///{db_path.as_posix()}")
@@ -53,11 +69,11 @@ def test_sqlite_adapter_rejects_invalid_numeric_where_value(tmp_path) -> None:
 def test_sqlite_adapter_allows_sql_like_text_in_string_field(tmp_path) -> None:
     db_path = tmp_path / "adapter_string_literal.db"
     adapter = SQLiteAdapter(url=f"sqlite:///{db_path.as_posix()}")
-    adapter.create("users", {"id": 1, "name": "Veeresh'; DROP TABLE users; --"})
+    adapter.create("users", {"id": 1, "name": "Example User'; DROP TABLE users; --"})
 
-    rows = adapter.find("users", where={"name": "Veeresh'; DROP TABLE users; --"})
+    rows = adapter.find("users", where={"name": "Example User'; DROP TABLE users; --"})
     assert len(rows) == 1
-    assert rows[0]["name"] == "Veeresh'; DROP TABLE users; --"
+    assert rows[0]["name"] == "Example User'; DROP TABLE users; --"
 
 
 def test_run_native_strips_sqlalchemy_background_link(tmp_path) -> None:
@@ -297,6 +313,27 @@ def test_sqlite_adapter_aggregate_group_by_metrics_and_having(tmp_path) -> None:
     assert len(rows) == 1
     assert rows[0]["orders"] == 2
     assert rows[0]["sum_amount"] == 30
+
+
+def test_sqlite_adapter_aggregate_accepts_friendly_having_string(tmp_path) -> None:
+    db_path = tmp_path / "adapter_aggregate_having_string.db"
+    adapter = SQLiteAdapter(url=f"sqlite:///{db_path.as_posix()}")
+    adapter.create_many(
+        "Orders",
+        [
+            {"order_id": 1, "paid": True, "amount": 10},
+            {"order_id": 2, "paid": True, "amount": 20},
+            {"order_id": 3, "paid": False, "amount": 5},
+        ],
+    )
+    rows = adapter.aggregate(
+        "Orders",
+        group_by="paid",
+        metrics={"total": "count(*)"},
+        having="total >= 2",
+    )
+
+    assert rows == [{"paid": 1, "total": 2}]
 
 
 def test_sqlite_adapter_aggregate_rejects_invalid_metric() -> None:

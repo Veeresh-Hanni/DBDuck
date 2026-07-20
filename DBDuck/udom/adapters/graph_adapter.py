@@ -80,7 +80,7 @@ class GraphAdapter(BaseAdapter):
                 db=self.db_instance,
                 exc=exc,
             )
-            raise QueryError("Database execution failed") from exc
+            raise QueryError(str(exc) or exc.__class__.__name__) from exc
 
     def convert_uql(self, uql_query: str):
         text = uql_query.strip()
@@ -320,11 +320,12 @@ class GraphAdapter(BaseAdapter):
 
     def _parse_order_by(self, order_by: str) -> tuple[str, str]:
         text = order_by.strip()
-        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)(?:\s+(ASC|DESC))?", text, flags=re.IGNORECASE)
+        match = re.fullmatch(r"(-?)([A-Za-z_][A-Za-z0-9_]*)(?:\s+(ASC|DESC))?", text, flags=re.IGNORECASE)
         if not match:
             raise QueryError("Invalid order_by clause")
-        field = self._validate_identifier(match.group(1), kind="graph field")
-        direction = (match.group(2) or "ASC").upper()
+        descending_prefix, raw_field = match.group(1), match.group(2)
+        field = self._validate_identifier(raw_field, kind="graph field")
+        direction = (match.group(3) or ("DESC" if descending_prefix else "ASC")).upper()
         return field, direction
 
     @classmethod

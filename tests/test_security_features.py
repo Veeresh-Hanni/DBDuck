@@ -122,10 +122,10 @@ def test_sql_hashes_sensitive_fields_on_create_and_update(tmp_path) -> None:
     db_file = tmp_path / "security_hashing.db"
     db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
 
-    db.create("users", {"id": 1, "username": "veeresh", "password": "plain-secret"})
+    db.create("users", {"id": 1, "username": "username", "password": "password"})
     row = db.find("users", where={"id": 1})[0]
-    assert row["password"] != "plain-secret"
-    assert bcrypt.checkpw(b"plain-secret", row["password"].encode("utf-8"))
+    assert row["password"] != "password"
+    assert bcrypt.checkpw(b"password", row["password"].encode("utf-8"))
 
     db.update("users", {"password": "new-secret"}, where={"id": 1})
     updated = db.find("users", where={"id": 1})[0]
@@ -136,21 +136,21 @@ def test_nosql_hashes_sensitive_fields_on_create() -> None:
     db = UDOM(db_type="nosql", db_instance="mongodb", url="mongodb://localhost:27017/udom")
     fake_client = _install_fake_mongo(db)
 
-    db.create("users", {"username": "veeresh", "password": "plain-secret"})
+    db.create("users", {"username": "username", "password": "password"})
     stored = fake_client.db.collections["users"].docs[0]
-    assert stored["password"] != "plain-secret"
-    assert bcrypt.checkpw(b"plain-secret", stored["password"].encode("utf-8"))
+    assert stored["password"] != "password"
+    assert bcrypt.checkpw(b"password", stored["password"].encode("utf-8"))
 
 
 def test_udom_verify_secret_for_sql_stored_hash(tmp_path) -> None:
     db_file = tmp_path / "verify_secret.db"
     db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
-    db.create("users", {"id": 1, "username": "veeresh", "password": "plain-secret"})
+    db.create("users", {"id": 1, "username": "username", "password": "password"})
 
     stored_hash = db.find("users", where={"id": 1})[0]["password"]
-    assert db.verify_secret("plain-secret", stored_hash) is True
-    assert db.verify_secret("wrong-secret", stored_hash) is False
-    assert db.verify_secret("plain-secret", "not-a-bcrypt-hash") is False
+    assert db.verify_secret("password", stored_hash) is True
+    assert db.verify_secret("wrong-password", stored_hash) is False
+    assert db.verify_secret("password", "not-a-bcrypt-hash") is False
 
 
 def test_sql_security_audit_log_is_persisted_for_blocked_injection(tmp_path) -> None:
@@ -190,7 +190,7 @@ def test_rate_limiting_blocks_excess_queries(tmp_path) -> None:
         rate_limit_max_requests=2,
         rate_limit_window_seconds=60,
     )
-    db.create("users", {"id": 1, "username": "veeresh"})
+    db.create("users", {"id": 1, "username": "username"})
 
     assert len(db.find("users")) == 1
     assert len(db.find("users")) == 1
@@ -213,11 +213,11 @@ def test_umodel_verify_secret_field(tmp_path) -> None:
     db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
     User.bind(db)
 
-    User(id=1, username="veeresh", password="plain-secret").save()
+    User(id=1, username="username", password="password").save()
     user = User.find_one(where={"id": 1})
     assert user is not None
-    assert user.verify_secret("password", "plain-secret") is True
-    assert user.verify_secret("password", "wrong-secret") is False
+    assert user.verify_secret("password", "password") is True
+    assert user.verify_secret("password", "wrong-password") is False
 
 
 def test_umodel_custom_sensitive_fields_are_hashed(tmp_path) -> None:
@@ -233,7 +233,7 @@ def test_umodel_custom_sensitive_fields_are_hashed(tmp_path) -> None:
     db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
     Member.bind(db)
 
-    Member(id=1, username="veeresh", pin="1234").save()
+    Member(id=1, username="username", pin="1234").save()
     row = db.find("Member", where={"id": 1})[0]
     assert row["pin"] != "1234"
     assert db.verify_secret("1234", row["pin"]) is True
@@ -252,8 +252,8 @@ def test_umodel_declared_sensitive_fields_replace_default_hash_list(tmp_path) ->
     db = UDOM(db_type="sql", db_instance="sqlite", url=f"sqlite:///{db_file.as_posix()}")
     Profile.bind(db)
 
-    Profile(id=1, password="plain-password", access_code="A-1").save()
+    Profile(id=1, password="password", access_code="A-1").save()
     row = db.find("Profile", where={"id": 1})[0]
-    assert row["password"] == "plain-password"
+    assert row["password"] == "password"
     assert row["access_code"] != "A-1"
     assert db.verify_secret("A-1", row["access_code"]) is True

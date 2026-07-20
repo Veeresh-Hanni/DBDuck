@@ -55,7 +55,7 @@ def _get_env(name: str, default: str) -> str:
 
 def _build_db() -> UDOM:
     db_user = os.getenv("MYSQL_USER","root")
-    db_pass = os.getenv("MYSQL_PASSWORD","Veeru123") # Password-nalli symbols idre quote_plus use mad
+    db_pass = os.getenv("MYSQL_PASSWORD","password") # Password-nalli symbols idre quote_plus use mad
     db_hostname = os.getenv("MYSQL_HOST","localhost")
     db_name = os.getenv("MYSQL_DB","DBDuck")
     port = os.getenv("MYSQL_PORT",3306)

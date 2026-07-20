@@ -100,6 +100,15 @@ class Column:
     def __set__(self, instance, value: Any) -> None:
         instance.__dict__[self.name] = value
 
+    def __str__(self) -> str:
+        return str(self.name or "")
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __neg__(self) -> str:
+        return f"-{self}"
+
 
 def _resolve_python_type(type_spec: Any) -> Any:
     if isinstance(type_spec, _TypeSpec):

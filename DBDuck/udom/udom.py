@@ -129,9 +129,9 @@ class UDOM:
             return None
         defaults = {
             "sqlite": "sqlite:///test.db",
-            "mysql": "mysql+pymysql://root:password@localhost:3306/udom",
-            "postgres": "postgresql+psycopg2://postgres:password@localhost:5432/udom",
-            "mssql": "mssql+pyodbc://sa:password@localhost:1433/udom?driver=ODBC+Driver+17+for+SQL+Server",
+            "mysql": "mysql+pymysql://username:pass@localhost:3306/udom",
+            "postgres": "postgresql+psycopg2://username:pass@localhost:5432/udom",
+            "mssql": "mssql+pyodbc://username:pass@localhost:1433/udom?driver=ODBC+Driver+17+for+SQL+Server",
         }
         return defaults.get(db_instance)
 
@@ -182,13 +182,13 @@ class UDOM:
             raise QueryError("entity must be a non-empty string")
         return entity.strip()
 
-    def query(self, query: str) -> Any:
+    def query(self, query: str, params: Mapping[str, Any] | None = None) -> Any:
         self._enforce_rate_limit("query", entity="-", caller_id=self._current_caller_id())
-        return self.adapter.run_native(query)
+        return self.adapter.run_native(query, params=params)
 
-    def execute(self, query: str) -> Any:
+    def execute(self, query: str, params: Mapping[str, Any] | None = None) -> Any:
         self._enforce_rate_limit("execute", entity="-", caller_id=self._current_caller_id())
-        return self.adapter.run_native(query)
+        return self.adapter.run_native(query, params=params)
 
     def uquery(self, uql: str) -> str:
         return self.adapter.convert_uql(uql)

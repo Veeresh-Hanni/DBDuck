@@ -74,11 +74,11 @@ class AsyncUDOM:
     def adapter(self):
         return self._sync.adapter
 
-    async def query(self, query: str) -> Any:
-        return await self._call(self._sync.query, query)
+    async def query(self, query: str, params: Mapping[str, Any] | None = None) -> Any:
+        return await self._call(self._sync.query, query, params)
 
-    async def execute(self, query: str) -> Any:
-        return await self._call(self._sync.execute, query)
+    async def execute(self, query: str, params: Mapping[str, Any] | None = None) -> Any:
+        return await self._call(self._sync.execute, query, params)
 
     async def uquery(self, uql: str) -> Any:
         return await self._call(self._sync.uquery, uql)

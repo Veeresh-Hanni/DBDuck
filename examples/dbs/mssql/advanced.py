@@ -11,7 +11,7 @@ def main() -> None:
         "DRIVER={ODBC Driver 17 for SQL Server};"
         "SERVER=servername;"
         "DATABASE=dbduck;"
-        "UID=sa;"
+        "UID=username;"
         "PWD=pass;"
         "TrustServerCertificate=yes;"
     )

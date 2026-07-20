@@ -99,7 +99,7 @@ class SQLAdapter(BaseAdapter):
                     db=self.dialect,
                     exc=exc,
                 )
-                raise QueryError("Database execution failed") from exc
+                raise QueryError(str(exc) or exc.__class__.__name__) from exc
 
     def convert_uql(self, uql):
         uql = uql.strip()
@@ -168,11 +168,33 @@ class SQLAdapter(BaseAdapter):
         if not match:
             return None
         field, direction = match.group(1), match.group(2) or "ASC"
-        return f"{self._quote(field)} {direction.upper()}"
+        return self._validate_order_by_clause(f"{field} {direction}")
 
     def _extract_limit(self, uql):
         match = re.search(r"LIMIT\s+(\d+)", uql, re.IGNORECASE)
         return match.group(1) if match else None
+
+    def _validate_order_by_clause(self, order_by):
+        match = re.fullmatch(r"(-?)([A-Za-z_][A-Za-z0-9_]*)(?:\s+(ASC|DESC))?", order_by.strip(), re.IGNORECASE)
+        if not match:
+            raise QueryError("Invalid order_by clause")
+        descending_prefix, field = match.group(1), match.group(2)
+        direction = (match.group(3) or ("DESC" if descending_prefix else "ASC")).upper()
+        return f"{self._quote(field)} {direction}"
+
+    @staticmethod
+    def _validate_limit(limit):
+        if isinstance(limit, bool):
+            raise QueryError("limit must be a positive integer")
+        if isinstance(limit, int):
+            value = limit
+        elif isinstance(limit, str) and re.fullmatch(r"\d+", limit.strip()):
+            value = int(limit.strip())
+        else:
+            raise QueryError("limit must be a positive integer")
+        if value <= 0:
+            raise QueryError("limit must be a positive integer")
+        return str(value)
 
     def create(self, entity, data):
         entity_name = self._validate_identifier(str(entity))
@@ -204,9 +226,9 @@ class SQLAdapter(BaseAdapter):
             where_sql, params = self._parameterize_condition(where.strip())
             query += f" WHERE {where_sql}"
         if order_by:
-            query += " ORDER BY " + str(order_by)
+            query += " ORDER BY " + self._validate_order_by_clause(str(order_by))
         if limit is not None:
-            query += " LIMIT " + str(limit)
+            query += " LIMIT " + self._validate_limit(limit)
         return self.run_native(ParameterizedSQL(query + ";", params))
 
     def delete(self, entity, where):
@@ -227,6 +249,8 @@ class SQLAdapter(BaseAdapter):
 
     def update(self, entity, data, where):
         entity_name = self._validate_identifier(str(entity))
+        if not data:
+            raise QueryError("update data must be a non-empty mapping")
         assignments = []
         params = {}
         for idx, (key, value) in enumerate(dict(data).items()):
@@ -234,14 +258,17 @@ class SQLAdapter(BaseAdapter):
             pname = f"u_{idx}"
             assignments.append(f"{self._quote(field_name)} = :{pname}")
             params[pname] = value
-        where_sql = "1=1"
-        where_params = {}
         if isinstance(where, dict) and where:
             where_sql, where_params = self._parameterize_condition(
-                " AND ".join(f"{key} = {self._literal_to_uql(value)}" for key, value in where.items())
+                " AND ".join(
+                    f"{self._validate_identifier(str(key))} = {self._literal_to_uql(value)}"
+                    for key, value in where.items()
+                )
             )
         elif isinstance(where, str) and where.strip():
             where_sql, where_params = self._parameterize_condition(where.strip())
+        else:
+            raise QueryError("update requires a non-empty where condition")
         sql = f"UPDATE {self._quote(entity_name)} SET {', '.join(assignments)} WHERE {where_sql}"  # nosec B608
         params.update(where_params)
         return self.run_native(ParameterizedSQL(sql, params))
@@ -252,7 +279,10 @@ class SQLAdapter(BaseAdapter):
         where_sql = ""
         if isinstance(where, dict) and where:
             where_sql, params = self._parameterize_condition(
-                " AND ".join(f"{key} = {self._literal_to_uql(value)}" for key, value in where.items())
+                " AND ".join(
+                    f"{self._validate_identifier(str(key))} = {self._literal_to_uql(value)}"
+                    for key, value in where.items()
+                )
             )
         elif isinstance(where, str) and where.strip():
             where_sql, params = self._parameterize_condition(where.strip())

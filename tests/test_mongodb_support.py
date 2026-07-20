@@ -218,7 +218,7 @@ def test_mongodb_find_order_by_limit_and_string_where() -> None:
             {"order_id": 2, "ok": False},
         ],
     )
-    rows = db.find("events", where="ok = true", order_by="order_id DESC", limit=1)
+    rows = db.find("events", where="ok = true", order_by="-order_id", limit=1)
     assert len(rows) == 1
     assert rows[0]["order_id"] == 3
 

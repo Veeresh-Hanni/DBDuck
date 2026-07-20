@@ -11,8 +11,8 @@ def main() -> None:
         "DRIVER={ODBC Driver 17 for SQL Server};"
         "SERVER=localhost;"
         "DATABASE=dbduck;"
-        "UID=sa;"
-        "PWD=password;"
+        "UID=username;"
+        "PWD=pass;"
         "TrustServerCertificate=yes;"
     )
     url = f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_str)}"
