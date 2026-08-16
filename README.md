@@ -212,9 +212,13 @@ admins = base.clone().where(role="admin").find()
 regular = base.clone().where(role="user").find()
 ```
 
-### Query Builder Across All Backends
+### Query Builder Across Backends
 
-The Query Builder works uniformly across all database types:
+The Query Builder gives every backend the same entry point and terminal method
+shape. Core equality filters, ordering, pagination, projection, and CRUD flows
+are shared; graph and vector operations expose backend-specific helpers. SQL
+currently has the deepest advanced lookup support (`where_gt`, `where_in`,
+null checks, joins, and aggregate `having` comparisons).
 
 ```python
 # SQL (SQLite, MySQL, PostgreSQL, SQL Server)

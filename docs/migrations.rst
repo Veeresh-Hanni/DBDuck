@@ -18,7 +18,7 @@ control.
 SQLite alterations
 ------------------
 
-DBDuck 0.4.1 enables Alembic batch mode for SQLite. Schema changes that SQLite
+DBDuck 0.4.4 enables Alembic batch mode for SQLite. Schema changes that SQLite
 cannot execute with a direct ``ALTER TABLE`` are applied by creating the new
 table layout and copying existing rows into it.
 

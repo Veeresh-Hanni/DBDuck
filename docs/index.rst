@@ -4,7 +4,7 @@ DBDuck
 
 One Python API for SQL, MongoDB, Neo4j, Qdrant, and asynchronous data workflows.
 
-This documentation describes DBDuck **0.4.1**.
+This documentation describes DBDuck **0.4.4**.
 
 .. toctree::
    :maxdepth: 2

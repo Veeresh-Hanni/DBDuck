@@ -1,7 +1,7 @@
 Installation
 ============
 
-DBDuck 0.4.1 supports Python 3.10 and newer.
+DBDuck 0.4.4 supports Python 3.10 and newer.
 
 Base package
 ------------

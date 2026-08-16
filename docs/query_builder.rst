@@ -1,7 +1,10 @@
 Query Builder
 =============
 
-The fluent query builder works across DBDuck backends.
+The fluent query builder provides one chainable API across DBDuck backends.
+Core equality filters, ordering, pagination, projection, CRUD terminals, and
+backend-specific graph/vector helpers are available through the same
+``db.table("entity")`` entry point.
 
 .. code-block:: python
 
@@ -17,7 +20,7 @@ The fluent query builder works across DBDuck backends.
 UModel projections
 ------------------
 
-``UModel.query()`` returns typed model instances. In 0.4.1, serializing a
+``UModel.query()`` returns typed model instances. In 0.4.4, serializing a
 projected model preserves the selected columns exactly:
 
 .. code-block:: python
@@ -34,3 +37,11 @@ Common operations
 - Projection: ``select()``.
 - Ordering and pagination: ``order()``, ``limit()``, ``offset()``, ``page()`` and ``find_page()``.
 - Terminals: ``find()``, ``first()``, ``count()``, ``exists()``, ``update()`` and ``delete()``.
+
+Backend notes
+-------------
+
+Advanced lookup suffixes such as ``__gt`` and ``__in`` are fully exercised by
+the SQL adapters. MongoDB and graph backends support the shared table API and
+their backend-specific helpers, with deeper lookup parity tracked for the next
+minor release.
