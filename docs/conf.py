@@ -37,7 +37,7 @@ html_theme = 'alabaster'
 html_static_path = ['_static']
 html_css_files = ['custom.css']
 html_title = f'DBDuck {release} documentation'
-
+html_extra_path = ["../googlebff88ee5bb92fdda.html"]
 # -- Options for autodoc ---------------------------------------------------
 autodoc_default_options = {
     'members': True,
